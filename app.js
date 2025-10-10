@@ -1,15 +1,47 @@
 /* ========= YouTube IFrame API ========= */
 let player;
-function onYouTubeIframeAPIReady(){
-  try{
-    player = new YT.Player('ytplayer', {
-      height:'100%', width:'100%',
-      host:'https://www.youtube.com',
-      playerVars:{ playsinline:1, rel:0, origin: location.origin }
+
+// プレイヤーを安全に作る
+function makePlayer(){
+  const hostEl = document.getElementById('ytplayer');
+  if (!hostEl) return false;
+  if (!window.YT || !YT.Player) return false;
+
+  // 既存プレイヤーがあれば破棄
+  if (player && typeof player.destroy === 'function') {
+    try { player.destroy(); } catch {}
+    player = null;
+  }
+
+  // file:// だと origin は入れない
+  const vars = { playsinline: 1, rel: 0 };
+  if (location.protocol.startsWith('http')) vars.origin = location.origin;
+
+  try {
+    player = new YT.Player(hostEl, {
+      height: '100%',
+      width: '100%',
+      host: 'https://www.youtube.com',
+      playerVars: vars
     });
-  }catch(e){ console.error(e); }
+    return true;
+  } catch(e){
+    console.error('[yt] failed to init', e);
+    return false;
+  }
 }
+
+// 公式コールバック（API側から呼ばれる）
+function onYouTubeIframeAPIReady(){ makePlayer(); }
 window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
+
+// DOM読み込み後、APIロード順が逆でも拾えるようにリトライ
+document.addEventListener('DOMContentLoaded', () => {
+  // 0.5秒おきに最大6秒リトライ（API/DOMのどちらかが先でもOK）
+  const t = setInterval(() => { if (makePlayer()) clearInterval(t); }, 500);
+  setTimeout(() => clearInterval(t), 6000);
+});
+
 
 /* ========= アプリ初期化 ========= */
 document.addEventListener('DOMContentLoaded', () => {
@@ -811,41 +843,46 @@ return out;
 
   /* ===== YouTube 入力（URL/ID対応） ===== */
   function parseYouTubeInput(input){
-    const s = String(input || '').trim();
-    // 1) URLとして解釈
-    try{
-      const u = new URL(s);
-      const list = u.searchParams.get('list');
-      const v    = u.searchParams.get('v');
-      if (list) return { playlist:list };
-      if (u.hostname === 'youtu.be' && u.pathname.length > 1) {
-        return { video: u.pathname.slice(1) };
-      }
-      if (v) return { video:v };
-    }catch{ /* 非URL */ }
-    // 2) プレーンID
-    if (/^PL[\w-]+$/i.test(s)) return { playlist:s };
-    if (/^[\w-]{11}$/.test(s)) return { video:s };
-    return {};
-  }
+  const s = String(input || '').trim();
+  try {
+    const u = new URL(s);
+    const list = u.searchParams.get('list');
+    const v    = u.searchParams.get('v');
+    if (list) return { playlist:list };
+    if (u.hostname === 'youtu.be' && u.pathname.length > 1) return { video:u.pathname.slice(1) };
+    if (v) return { video:v };
+  } catch {}
+  if (/^PL[\w-]+$/i.test(s)) return { playlist:s };
+  if (/^[\w-]{11}$/.test(s)) return { video:s };
+  return {};
+}
 
-  const playlistInput=document.getElementById('playlistInput');
-  if(playlistInput) playlistInput.addEventListener('keydown', e=>{
-    if(e.key!=='Enter') return;
-    const v=playlistInput.value.trim(); if(!v||!player) return;
+const playlistInput = document.getElementById('playlistInput');
+if (playlistInput){
+  const run = () => {
+    const v = playlistInput.value.trim();
+    if (!v || !player) return;
     const p = parseYouTubeInput(v);
-    if (p.playlist) player.loadPlaylist({ list:p.playlist, listType:'playlist', index:0 });
-    else if (p.video) player.loadVideoById(p.video);
-    else alert('YouTubeのURL/IDが読めませんでした');
-  });
-  const playBtn=document.getElementById('playBtn');
-  const pauseBtn=document.getElementById('pauseBtn');
-  const prevBtn=document.getElementById('prevBtn');
-  const nextBtn=document.getElementById('nextBtn');
-  if(playBtn) playBtn.onclick=()=> player?.playVideo?.();
-  if(pauseBtn) pauseBtn.onclick=()=> player?.pauseVideo?.();
-  if(prevBtn) prevBtn.onclick=()=> player?.previousVideo?.();
-  if(nextBtn) nextBtn.onclick=()=> player?.nextVideo?.();
+    if (p.playlist){
+      (player.loadPlaylist ? player.loadPlaylist({ list:p.playlist, listType:'playlist', index:0 })
+                           : player.cuePlaylist?.({ list:p.playlist, listType:'playlist', index:0 }));
+    } else if (p.video){
+      (player.loadVideoById ? player.loadVideoById(p.video)
+                            : player.cueVideoById?.(p.video));
+    } else {
+      alert('YouTubeのURL/IDが読めませんでした');
+    }
+  };
+  playlistInput.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+  playlistInput.addEventListener('change', run); // 貼り付け→フォーカス外しでも反応
+}
+
+// 再生系ボタン（存在すれば）
+document.getElementById('playBtn')?.addEventListener('click', () => player?.playVideo?.());
+document.getElementById('pauseBtn')?.addEventListener('click', () => player?.pauseVideo?.());
+document.getElementById('prevBtn')?.addEventListener('click', () => player?.previousVideo?.());
+document.getElementById('nextBtn')?.addEventListener('click', () => player?.nextVideo?.());
+
 
   /* ===== タイマー ===== */
   const tKey='glass_timer_settings_v1';
