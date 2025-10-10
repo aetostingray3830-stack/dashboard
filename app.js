@@ -356,12 +356,11 @@ if (typeof window.marked !== 'undefined' && marked?.parse) {
   html = fallbackMarkdownToHtml(mdPre);
 }
 
-html = postprocessHeadingMarkers(html);     // ★ まず見出しを <hN> に戻す
-html = decodeColorMarkersToHtml(html);      // ★ その後 色マーカーを <span style> に
+html = postprocessHeadingMarkers(html);
+html = decodeColorMarkersToHtml(html);
+html = normalizeTaskListHtml(html);   // ← 追加（最後に）
 memoPreview.innerHTML = html;
-
 buildTOC(md0);
-
   }
 
   function showEdit(){
@@ -645,7 +644,9 @@ let out = (window.marked?.parse)
   : fallbackMarkdownToHtml(textPre);
 
 out = postprocessHeadingMarkers(out);
-return decodeColorMarkersToHtml(out);
+out = decodeColorMarkersToHtml(out);
+out = normalizeTaskListHtml(out);     // ← 追加（最後に）
+return out;
 
   }
 
