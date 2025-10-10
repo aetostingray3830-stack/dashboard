@@ -182,7 +182,9 @@ function stripAllColorTags(mdOrText){
 
   function buildTOC(md){
     if(!tocList) return;
-    const text = normalizeMd(md);
+    const text0 = normalizeMd(md);
+    const text1 = encodeColorMarkers(text0);     // ← 追加
+    const textPre = preprocessHeadings(text1);
     const lines = text.split('\n'), items=[];
     for(const line of lines){
       const m = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
@@ -546,7 +548,8 @@ const mdPre = preprocessHeadings(md1);   // ← 見出しHTML化は従来どお�
     try {
       if (typeof window.marked !== 'undefined') {
         marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
-        return marked.parse(textPre);
+        const out = marked.parse(textPre);
+        return decodeColorMarkersToHtml(out);        // ← 追加
       }
     } catch(e){ console.error(e); }
     return fallback;
