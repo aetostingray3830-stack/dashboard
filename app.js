@@ -605,52 +605,84 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   if (exportPdfBtn) exportPdfBtn.onclick = async () => {
-    if (!memoArea) return;
-    const md = memoArea.value;
-    const htmlBody = markdownToHtmlBody(md);
-    const css = `
-      body{margin:24px auto;max-width:800px;padding:0 16px;line-height:1.75;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,'Apple Color Emoji','Segoe UI Emoji';color:#111;}
-      h1,h2,h3,h4,h5,h6{line-height:1.3;margin:1.6em 0 .6em}
-      h1{font-size:2rem} h2{font-size:1.6rem} h3{font-size:1.3rem}
-      pre{padding:12px;background:#f5f5f5;overflow:auto;border-radius:8px}
-      code{background:#f5f5f5;padding:.2em .35em;border-radius:4px}
-      blockquote{margin:1em 0;padding:.5em 1em;border-left:4px solid #ddd;color:#555;background:#fafafa}
-      ul,ol{padding-left:1.4em}
-      a{color:#2563eb;text-decoration:none} a:hover{text-decoration:underline}
-      hr{border:none;border-top:1px solid #e5e5e5;margin:2em 0}
-      img{max-width:100%;height:auto}
-      table{border-collapse:collapse} td,th{border:1px solid #e5e5e5;padding:.4em .6em}
-    `.trim();
+  if (!memoArea) return;
 
-    const tmp = document.createElement('div');
-    tmp.style.position='fixed'; tmp.style.left='-9999px';
-    tmp.innerHTML = `<style>${css}</style>` + htmlBody;
-    document.body.appendChild(tmp);
+  // 1) HTML出力と同じドキュメントを生成
+  const md = memoArea.value;
+  const htmlBody = markdownToHtmlBody(md);            // 本文（既存）
+  const docHtml  = buildStandaloneHtml(memoTitle(), htmlBody); // 同じCSS入りの完全HTML
 
-    const filename = memoPdfFilename();
+  // 2) 非表示iframeを作って HTML を流し込み、ロード完了を待つ
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.left = '-9999px';
+  iframe.style.top  = '-9999px';
+  iframe.setAttribute('sandbox', 'allow-same-origin'); // html2canvas用にsame-origin権限だけ付与
+  document.body.appendChild(iframe);
 
-    try{
-      if (window.html2pdf) {
-        await html2pdf().set({
-          margin: 10,
-          filename,
-          image: { type: 'jpeg', quality: 0.98 },
-          html2canvas: { scale: 2, useCORS: true },
-          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-        }).from(tmp).save();
-        exportPdfBtn.textContent = 'PDF保存済';
-      } else {
-        alert('PDFライブラリが読み込まれていません。ネットワークやdefer属性を確認してください。');
-        exportPdfBtn.textContent = 'PDF保存失敗';
-      }
-    }catch(e){
-      console.error(e);
-      exportPdfBtn.textContent = 'PDF保存失敗';
-    }finally{
-      setTimeout(()=> exportPdfBtn.textContent = 'PDF保存', 1400);
-      tmp.remove();
+  // iframeにHTMLを書き込む
+  const w = iframe.contentWindow;
+  const d = w.document;
+  d.open();
+  d.write(docHtml);
+  d.close();
+
+  // 3) フォント/画像の読み込み待ち
+  const waitForReady = async () => {
+    // DOMContentLoaded相当
+    if (d.readyState !== 'complete') {
+      await new Promise(r => w.addEventListener('load', r, { once: true }));
+    }
+    // 画像ロード
+    const imgs = Array.from(d.images || []);
+    await Promise.all(imgs.map(img => {
+      if (img.complete) return Promise.resolve();
+      return new Promise(res => {
+        img.addEventListener('load', res, { once: true });
+        img.addEventListener('error', res, { once: true });
+      });
+    }));
+    // Webフォント
+    if (d.fonts && d.fonts.ready) {
+      try { await d.fonts.ready; } catch {}
     }
   };
+
+  const filename = memoPdfFilename();
+
+  try {
+    await waitForReady();
+    // 4) html2pdfでPDFに
+    if (window.html2pdf) {
+      // CORS画像を拾えるように
+      await html2pdf().set({
+        margin: 10,
+        filename,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,      // 必要なら
+          logging: false,
+          windowWidth: d.documentElement.scrollWidth,
+          windowHeight: d.documentElement.scrollHeight
+        },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      }).from(d.body).save();
+      exportPdfBtn.textContent = 'PDF保存済';
+    } else {
+      alert('PDFライブラリ（html2pdf.js）が読み込まれていません。<head>にCDNタグを追加してください。');
+      exportPdfBtn.textContent = 'PDF保存失敗';
+    }
+  } catch (e) {
+    console.error(e);
+    exportPdfBtn.textContent = 'PDF保存失敗';
+  } finally {
+    setTimeout(()=> exportPdfBtn.textContent = 'PDF保存', 1400);
+    iframe.remove();
+  }
+};
+
 
   /* ===== ToDo ===== */
   const todoKey='glass_todos_v1';
