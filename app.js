@@ -13,14 +13,13 @@ window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
 
 /* ========= アプリ初期化 ========= */
 document.addEventListener('DOMContentLoaded', () => {
-  /* ===== 拡張の未処理Promise警告（任意で抑制） ===== */
+  /* ===== 任意：拡張の未処理Promise警告を抑制 ===== */
   window.addEventListener('unhandledrejection', (e) => {
     const msg = (e.reason && e.reason.message) || '';
     if (/message port closed/i.test(msg)) e.preventDefault();
   });
 
   /* ===== 永続化：localStorage → IndexedDB → DL ===== */
-  const lsOK = (()=>{ try{ const k='__probe__'; localStorage.setItem(k,'1'); localStorage.removeItem(k); return true; }catch(_){ return false; }})();
   const lsGet = (k, def='') => { try{ const v = localStorage.getItem(k); return v===null? def : v; }catch{ return def; } };
   const lsSet = (k, v) => { try{ localStorage.setItem(k, v); return true; }catch{ return false; } };
 
@@ -84,15 +83,37 @@ document.addEventListener('DOMContentLoaded', () => {
 
   /* ===== ユーティリティ ===== */
   const toStr = (v)=> (typeof v==='string'? v : (v==null? '' : String(v)));
+  const escHtml = (s)=> String(s).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
   const slugify = (str)=> toStr(str).toLowerCase().trim()
     .replace(/[^\w\- \u3000-\u9fff]/g,'').replace(/\s+/g,'-').replace(/-+/g,'-');
 
-  // Markdown正規化（全角＃→半角、改行→LF）
+  // Markdown正規化（全角＃→半角、CRLF→LF）
   function normalizeMd(md){
     return toStr(md).replace(/＃/g, '#').replace(/\r\n?/g, '\n');
   }
 
-  // .txt 用ファイル名（H1 or 日付）
+  // marked のレンダラー（新旧API両対応）
+  function createRenderer(){
+    const renderer = new marked.Renderer();
+    renderer.heading = (a,b,c) => {
+      // 新API: 引数が token オブジェクト
+      if (a && typeof a === 'object' && ('text' in a || 'tokens' in a || 'raw' in a || 'depth' in a)) {
+        const token = a;
+        const depth = token.depth || token.level || b || 1;
+        const raw = token.raw || token.text || c || '';
+        const text = token.text || (typeof c === 'string' ? c : raw);
+        const id = slugify(raw || text);
+        return `<h${depth} id="${id}">${escHtml(text)}</h${depth}>\n`;
+      }
+      // 旧API: (text, level, raw)
+      const text = a, level = b || 1, raw = c || a;
+      const id = slugify(raw || text);
+      return `<h${level} id="${id}">${escHtml(text)}</h${level}>\n`;
+    };
+    return renderer;
+  }
+
+  // ファイル名/タイトル
   function memoTxtFilename() {
     const text = (memoArea && memoArea.value) || '';
     const m = text.match(/^ {0,3}#\s*(.+?)\s*#*\s*$/m);
@@ -100,10 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const safe = base.replace(/[\\/:*?"<>|]/g,'_').trim().slice(0,80) || 'memo';
     return `${safe}.txt`;
   }
-  // HTML用
-  function memoHtmlFilename() {
-    return memoTxtFilename().replace(/\.txt$/i, '.html');
-  }
+  function memoHtmlFilename() { return memoTxtFilename().replace(/\.txt$/i, '.html'); }
   function memoTitle() {
     const text = (memoArea && memoArea.value) || '';
     const m = text.match(/^ {0,3}#\s*(.+?)\s*#*\s*$/m);
@@ -126,7 +144,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const previewBtn=document.getElementById('previewMode');
   const saveMemoBtn=document.getElementById('saveMemo');
   const clearMemoBtn=document.getElementById('clearMemo');
-  const exportHtmlBtn=document.getElementById('exportHtml'); // index.htmlにボタンが無ければ無視されます
+  const exportHtmlBtn=document.getElementById('exportHtml'); // （HTML側に無ければ無視）
   const tocList=document.getElementById('tocList');
 
   if(memoArea) memoArea.value = lsGet(memoKey, '');
@@ -139,7 +157,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const text = normalizeMd(md);
     const lines = text.split('\n'), items=[];
     for(const line of lines){
-      // 先頭0-3空白 + #1-6 + 末尾#は無視（CommonMark準拠）
       const m = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
       if(m){ items.push({level:m[1].length, text:m[2].trim()}); }
     }
@@ -160,8 +177,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const md  = normalizeMd(raw);
 
     const fallbackHtml = (() => {
-      const esc = (s)=>toStr(s).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
-      let t = esc(md);
+      let t = escHtml(md);
       t = t
         .replace(/^ {0,3}######\s+(.*?)\s*#*\s*$/gm, '<h6>$1</h6>')
         .replace(/^ {0,3}#####\s+(.*?)\s*#*\s*$/gm,  '<h5>$1</h5>')
@@ -182,11 +198,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       if (typeof window.marked !== 'undefined') {
         marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
-        const renderer = new marked.Renderer();
-        renderer.heading = (text, level, rawHead) => {
-          const id = slugify(rawHead || text);
-          return `<h${level} id="${id}">${toStr(text)}</h${level}>\n`;
-        };
+        const renderer = createRenderer();
         html = marked.parse(md, { renderer });
       }
     } catch (e) {
@@ -335,8 +347,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function markdownToHtmlBody(md) {
     const text = normalizeMd(md);
     const fallback = (() => {
-      const esc = (s)=>toStr(s).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
-      let t = esc(text);
+      let t = escHtml(text);
       t = t
         .replace(/^ {0,3}######\s+(.*?)\s*#*\s*$/gm, '<h6>$1</h6>')
         .replace(/^ {0,3}#####\s+(.*?)\s*#*\s*$/gm,  '<h5>$1</h5>')
@@ -355,11 +366,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       if (typeof window.marked !== 'undefined') {
         marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
-        const renderer = new marked.Renderer();
-        renderer.heading = (text2, level, rawHead) => {
-          const id = slugify((rawHead||text2));
-          return `<h${level} id="${id}">${toStr(text2)}</h${level}>\n`;
-        };
+        const renderer = createRenderer();
         return marked.parse(text, { renderer });
       }
     } catch(e){ console.error(e); }
@@ -384,7 +391,7 @@ document.addEventListener('DOMContentLoaded', () => {
       '<!doctype html>',
       '<html lang="ja"><head>',
       '<meta charset="utf-8" />',
-      `<title>${title.replace(/</g,'&lt;')}</title>`,
+      `<title>${escHtml(title)}</title>`,
       '<meta name="viewport" content="width=device-width,initial-scale=1" />',
       `<style>${css}</style>`,
       '</head><body>',
@@ -617,7 +624,7 @@ document.addEventListener('DOMContentLoaded', () => {
       b.addEventListener('click', ()=>{ s.mode=b.dataset.bg; saveSettings(s); applySettings(s); drawBgControls(s); });
     });
     if(blurRange) blurRange.oninput=()=>{ s.blur=Number(blurRange.value); applySettings(s); saveSettings(s); };
-    if(resetView) resetView.onclick=()=>{ const def={mode:'gradient-1',blur:12,whiteText:s.whiteText}; saveSettings(def); applySettings(def); drawBgControls(def); if(blurRange) blurRange.value=12; };
+    if(resetView) resetView.onclick=()=>{ const def={mode:'gradient-1',blur:12,whiteText:s.whiteText}; saveSettings(def); applySettings(def); drawBgControls(def); if(blurRange) value=12; };
     if(toggleWhiteText) toggleWhiteText.onclick=()=>{ s.whiteText = !s.whiteText; saveSettings(s); applySettings(s); };
     drawBgControls(s);
   }
