@@ -604,37 +604,47 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(()=> exportHtmlBtn.textContent = 'HTML保存', 1400);
   };
 
-  if (exportPdfBtn) exportPdfBtn.onclick = async () => {
+  // ★ ここだけ差し替え
+if (exportPdfBtn) exportPdfBtn.onclick = async () => {
   if (!memoArea) return;
 
-  // 1) HTML出力と同じドキュメントを生成
+  // 1) HTML出力と同じ完全HTMLを生成
   const md = memoArea.value;
-  const htmlBody = markdownToHtmlBody(md);            // 本文（既存）
-  const docHtml  = buildStandaloneHtml(memoTitle(), htmlBody); // 同じCSS入りの完全HTML
+  const htmlBody = markdownToHtmlBody(md);              // 本文
+  const docHtml  = buildStandaloneHtml(memoTitle(), htmlBody); // CSS込みの完全HTML
 
-  // 2) 非表示iframeを作って HTML を流し込み、ロード完了を待つ
-  const iframe = document.createElement('iframe');
-  iframe.style.position = 'fixed';
-  iframe.style.left = '-9999px';
-  iframe.style.top  = '-9999px';
-  iframe.setAttribute('sandbox', 'allow-same-origin'); // html2canvas用にsame-origin権限だけ付与
-  document.body.appendChild(iframe);
+  // 2) DOMParserで <body> と <style> を取り出して、非表示ホストに組み立てる
+  const parsed = new DOMParser().parseFromString(docHtml, 'text/html');
 
-  // iframeにHTMLを書き込む
-  const w = iframe.contentWindow;
-  const d = w.document;
-  d.open();
-  d.write(docHtml);
-  d.close();
+  const host = document.createElement('div');
+  Object.assign(host.style, {
+    position: 'fixed',
+    left: '-9999px',
+    top: '-9999px',
+    width: '794px',   // A4縦のプリンタ解像度基準に寄せたい場合はこの幅を調整
+    maxWidth: '794px'
+  });
 
-  // 3) フォント/画像の読み込み待ち
+  // head内の <style> を取り込む（@font-face や本文スタイルもPDF側に反映）
+  parsed.head.querySelectorAll('style').forEach(st => {
+    const copy = document.createElement('style');
+    copy.textContent = st.textContent || '';
+    host.appendChild(copy);
+  });
+
+  // body内容を移植
+  Array.from(parsed.body.childNodes).forEach(node => host.appendChild(node.cloneNode(true)));
+
+  // 画像のCORS対策：crossOrigin=anonymous を付けておくと html2canvas が拾いやすい
+  host.querySelectorAll('img').forEach(img => {
+    if (!img.getAttribute('crossorigin')) img.setAttribute('crossorigin', 'anonymous');
+  });
+
+  document.body.appendChild(host);
+
+  // 3) フォント・画像ロードを待つ
   const waitForReady = async () => {
-    // DOMContentLoaded相当
-    if (d.readyState !== 'complete') {
-      await new Promise(r => w.addEventListener('load', r, { once: true }));
-    }
-    // 画像ロード
-    const imgs = Array.from(d.images || []);
+    const imgs = Array.from(host.querySelectorAll('img'));
     await Promise.all(imgs.map(img => {
       if (img.complete) return Promise.resolve();
       return new Promise(res => {
@@ -642,9 +652,8 @@ document.addEventListener('DOMContentLoaded', () => {
         img.addEventListener('error', res, { once: true });
       });
     }));
-    // Webフォント
-    if (d.fonts && d.fonts.ready) {
-      try { await d.fonts.ready; } catch {}
+    if (document.fonts && document.fonts.ready) {
+      try { await document.fonts.ready; } catch {}
     }
   };
 
@@ -652,9 +661,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   try {
     await waitForReady();
-    // 4) html2pdfでPDFに
     if (window.html2pdf) {
-      // CORS画像を拾えるように
       await html2pdf().set({
         margin: 10,
         filename,
@@ -662,16 +669,18 @@ document.addEventListener('DOMContentLoaded', () => {
         html2canvas: {
           scale: 2,
           useCORS: true,
-          allowTaint: true,      // 必要なら
+          allowTaint: true,
           logging: false,
-          windowWidth: d.documentElement.scrollWidth,
-          windowHeight: d.documentElement.scrollHeight
+          // ホスト要素の実寸に合わせるとレイアウトのズレを防ぎやすい
+          windowWidth: host.scrollWidth,
+          windowHeight: host.scrollHeight,
+          backgroundColor: '#ffffff' // 透明を避けたい場合
         },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-      }).from(d.body).save();
+      }).from(host).save();
       exportPdfBtn.textContent = 'PDF保存済';
     } else {
-      alert('PDFライブラリ（html2pdf.js）が読み込まれていません。<head>にCDNタグを追加してください。');
+      alert('html2pdf.js が読み込まれていません。<head>にCDNタグを追加してください。');
       exportPdfBtn.textContent = 'PDF保存失敗';
     }
   } catch (e) {
@@ -679,9 +688,10 @@ document.addEventListener('DOMContentLoaded', () => {
     exportPdfBtn.textContent = 'PDF保存失敗';
   } finally {
     setTimeout(()=> exportPdfBtn.textContent = 'PDF保存', 1400);
-    iframe.remove();
+    host.remove();
   }
 };
+
 
 
   /* ===== ToDo ===== */
