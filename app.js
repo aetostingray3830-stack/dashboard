@@ -120,12 +120,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ========== インラインMarkdown（見出し内などで使う軽量処理） ==========
   function inlineMdToHtml(s){
-    return String(s ?? '')
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-      .replace(/~~([^~]+)~~/g, '<del>$1</del>');
-  }
+  return String(s ?? '')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+   .replace(/__([^_]+)__/g, '<strong>$1</strong>')   // __強調__
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+   .replace(/_([^_]+)_/g, '<em>$1</em>')             // _斜体_
+    .replace(/~~([^~]+)~~/g, '<del>$1</del>');
+}
+
 
   // ========== 見出し先行HTML化（id付与、見出し内の装飾OK） ==========
   function preprocessHeadings(md){
