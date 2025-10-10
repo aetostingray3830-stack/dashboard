@@ -202,40 +202,45 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderPreview(){
-    if(!memoArea || !memoPreview) return;
+  if(!memoArea || !memoPreview) return;
 
-    // 1) 正規化 → 色をマーカー化 → 見出しHTML化
-    const md0 = normalizeMd(memoArea.value || '');
-    const md1 = encodeColorMarkers(md0);
-    const mdPre = preprocessHeadings(md1);
+  // 1) 正規化 → <font> を一旦マーカー化（⟦C:#hex⟧..⟦/C⟧）
+  const md0 = normalizeMd(memoArea.value || '');
+  const md1 = encodeColorMarkers(md0);
 
-    // 2) マークダウン本体をHTML化
-    let html;
-    if (typeof window.marked !== 'undefined' && marked?.parse) {
-      marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
-      html = marked.parse(mdPre);
-    } else {
-      // フォールバック：最低限の置換（見出しは既にHTML済み）
-      let t = escHtml(mdPre);
-      t = t
-        .replace(/^> (.*)$/gm, '<blockquote>$1</blockquote>')
-        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-        .replace(/~~([^~]+)~~/g, '<del>$1</del>')
-        .replace(/`([^`]+)`/g, '<code>$1</code>')
-        .replace(/^\s*-\s+(.*)$/gm, '<li>$1</li>')
-        .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>')
-        .replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
-      html = `<p>${t}</p>`;
-    }
+  // 2) 見出しだけ先に HTML 化（見出し内でも ** / * / ~~ / ` が効く）
+  const mdPre = preprocessHeadings(md1);
 
-    // 3) 色マーカーを実際の <span style="color:…"> に戻す
-    html = decodeColorMarkersToHtml(html);
-
-    // 4) 描画＆TOC更新
-    memoPreview.innerHTML = html;
-    buildTOC(md0);
+  // 3) 本文の Markdown をHTML化
+  let html;
+  if (typeof window.marked !== 'undefined' && marked?.parse) {
+    marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
+    html = marked.parse(mdPre);
+  } else {
+    // フォールバック（最低限のインライン装飾＋引用・箇条書き）
+    let t = mdPre
+      // 引用
+      .replace(/^> (.*)$/gm, '<blockquote>$1</blockquote>')
+      // 行内コード → 太字 → 斜体 → 取り消し（順序が大事）
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+      .replace(/~~([^~]+)~~/g, '<del>$1</del>')
+      // 箇条書き
+      .replace(/^\s*-\s+(.*)$/gm, '<li>$1</li>')
+      .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>')
+      // 段落
+      .replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
+    html = `<p>${t}</p>`;
   }
+
+  // 4) 色マーカーを <span style="color:…"> に復元（ここで色が付く）
+  html = decodeColorMarkersToHtml(html);
+
+  // 5) 反映＆TOC
+  memoPreview.innerHTML = html;
+  buildTOC(md0);
+}
 
   function showEdit(){
     try{
@@ -509,29 +514,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
   /* ===== Markdown → HTML 変換 & HTML/ PDF 書き出し ===== */
   function markdownToHtmlBody(md) {
-    const text0 = normalizeMd(md);
-    const text1 = encodeColorMarkers(text0);
-    const textPre = preprocessHeadings(text1);
+  const text0 = normalizeMd(md);
+  const text1 = encodeColorMarkers(text0);
+  const textPre = preprocessHeadings(text1);
 
-    let out;
-    if (typeof window.marked !== 'undefined' && marked?.parse) {
-      marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
-      out = marked.parse(textPre);
-    } else {
-      let t = escHtml(textPre);
-      t = t
-        .replace(/^> (.*)$/gm, '<blockquote>$1</blockquote>')
-        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-        .replace(/~~([^~]+)~~/g, '<del>$1</del>')
-        .replace(/`([^`]+)`/g, '<code>$1</code>')
-        .replace(/^\s*-\s+(.*)$/gm, '<li>$1</li>')
-        .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>')
-        .replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
-      out = `<p>${t}</p>`;
-    }
-    return decodeColorMarkersToHtml(out);
+  let out;
+  if (typeof window.marked !== 'undefined' && marked?.parse) {
+    marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
+    out = marked.parse(textPre);
+  } else {
+    let t = textPre
+      .replace(/^> (.*)$/gm, '<blockquote>$1</blockquote>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+      .replace(/~~([^~]+)~~/g, '<del>$1</del>')
+      .replace(/^\s*-\s+(.*)$/gm, '<li>$1</li>')
+      .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>')
+      .replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
+    out = `<p>${t}</p>`;
   }
+  return decodeColorMarkersToHtml(out);
+}
 
   function buildStandaloneHtml(title, innerHtml) {
     const css = `
