@@ -11,43 +11,20 @@ function onYouTubeIframeAPIReady(){
 }
 window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
 
-
-// 堅牢DL（Blob → msSave → dataURL）
-function download(text, filename='backup.txt') {
-  try {
-    const blob = new Blob([text], {type:'text/plain;charset=utf-8'});
-    if (window.navigator && typeof window.navigator.msSaveBlob === 'function') {
-      window.navigator.msSaveBlob(blob, filename); // 旧Edge/IE
-      return true;
-    }
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 0);
-    return true;
-  } catch(e) {
-    try {
-      const a = document.createElement('a');
-      a.href = 'data:text/plain;charset=utf-8,' + encodeURIComponent(text);
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(()=> a.remove(), 0);
-      return true;
-    } catch(e2){ return false; }
-  }
-}
-const downloadTxt = (t, name)=> download(t, name || 'memo.txt');
-
 /* ========= アプリ初期化 ========= */
 document.addEventListener('DOMContentLoaded', () => {
+  /* ===== Consoleが騒がしい拡張の未処理Promiseを無視（任意） ===== */
+  window.addEventListener('unhandledrejection', (e) => {
+    const msg = (e.reason && e.reason.message) || '';
+    if (/message port closed/i.test(msg)) e.preventDefault();
+  });
+
   /* ====== 永続化：localStorage → IndexedDB → DL ====== */
   // localStorage ラッパー
   const lsOK = (()=>{ try{ const k='__probe__'; localStorage.setItem(k,'1'); localStorage.removeItem(k); return true; }catch(_){ return false; }})();
   const lsGet = (k, def='') => { try{ const v = localStorage.getItem(k); return v===null? def : v; }catch(e){ console.warn('lsGet fail', e); return def; } };
   const lsSet = (k, v) => { try{ localStorage.setItem(k, v); return true; }catch(e){ console.warn('lsSet fail', e); return false; } };
+
   // IndexedDB フォールバック
   const hasIDB = 'indexedDB' in window;
   let idbdb = null;
@@ -78,28 +55,47 @@ document.addEventListener('DOMContentLoaded', () => {
       req.onerror   = ()=> resolve(null);
     });
   }
-  // 退避用DL
-  const download = (text, filename='backup.txt') => {
-    const blob = new Blob([text], {type:'text/plain;charset=utf-8'}); const a=document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click();
-    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 0);
-  };
-  // IndexedDB 起動
   idbInit();
-  // 保存不可の注意（任意のバナー）
-  if(!lsOK){
-    const note=document.createElement('div');
-    note.textContent='⚠ このブラウザでは通常保存が制限されています。保存時はIndexedDB/ファイルDLで退避します。';
-    note.style.cssText='position:fixed;left:16px;bottom:16px;background:#000a;color:#fff;padding:8px 10px;border-radius:8px;font-size:12px;z-index:2000';
-    document.body.appendChild(note); setTimeout(()=>note.remove(), 6000);
+
+  /* ====== ダウンロード（堅牢版：Blob → msSave → dataURL） ====== */
+  function download(text, filename='backup.txt') {
+    try {
+      const blob = new Blob([text], {type:'text/plain;charset=utf-8'});
+      if (window.navigator && typeof window.navigator.msSaveBlob === 'function') {
+        window.navigator.msSaveBlob(blob, filename);
+        return true;
+      }
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 0);
+      return true;
+    } catch(e) {
+      console.warn('Blob download failed, fallback to data URL', e);
+      try {
+        const a = document.createElement('a');
+        a.href = 'data:text/plain;charset=utf-8,' + encodeURIComponent(text);
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(()=> a.remove(), 0);
+        return true;
+      } catch(e2){
+        console.error('data URL fallback failed', e2);
+        return false;
+      }
+    }
   }
+  const downloadTxt = (t, name)=> download(t, name || 'memo.txt');
 
   /* ====== ユーティリティ ====== */
   const toStr = (v) => (typeof v === 'string' ? v : (v == null ? '' : String(v)));
   const slugify = (str)=> toStr(str).toLowerCase().trim()
     .replace(/[^\w\- \u3000-\u9fff]/g,'').replace(/\s+/g,'-').replace(/-+/g,'-');
 
-  // メモ用の .txt ファイル名（H1 or 日付）
+  // .txt 用ファイル名（H1 or 日付）
   function memoFilename() {
     const text = (memoArea && memoArea.value) || '';
     const m = text.match(/^#\s*(.+)$/m);
@@ -107,8 +103,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const safe = base.replace(/[\\/:*?"<>|]/g,'_').trim().slice(0,80) || 'memo';
     return `${safe}.txt`;
   }
-  // .txt ダウンロード
-  function downloadTxt(text, name) { download(text, name || 'memo.txt'); }
 
   /* ===== 時計 ===== */
   const clockEl=document.getElementById('clock');
@@ -126,10 +120,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const previewBtn=document.getElementById('previewMode');
   const saveMemoBtn=document.getElementById('saveMemo');
   const clearMemoBtn=document.getElementById('clearMemo');
+  const exportHtmlBtn=document.getElementById('exportHtml'); // ← HTML保存ボタン（HTML側に追加してね）
   const tocList=document.getElementById('tocList');
 
   if(memoArea) memoArea.value = lsGet(memoKey, '');
-  // localStorageに無ければ IndexedDB から復元
   idbInit().then(()=> idbGet(memoKey)).then(v=>{
     if(memoArea && !memoArea.value && typeof v === 'string'){ memoArea.value = v; }
   });
@@ -175,7 +169,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let html = fallbackHtml;
     try {
       if (typeof window.marked !== 'undefined') {
-        marked.setOptions({ mangle:false, headerIds:false }); // 内部ID生成を止める
+        marked.setOptions({ mangle:false, headerIds:false }); // 内部ID生成停止
         const renderer = new marked.Renderer();
         renderer.heading = (text, level, raw) => {
           const id = slugify(raw || text);
@@ -211,48 +205,28 @@ document.addEventListener('DOMContentLoaded', () => {
   if(editBtn)    editBtn.onclick    = showEdit;
   if(previewBtn) previewBtn.onclick = showPreview;
 
-  // 保存：ブラウザ保存（可能なら）＋ 常に .txt ダウンロード
+  // .txt 保存（常にDLしつつ、可能ならブラウザにも保存）
   if (saveMemoBtn) saveMemoBtn.onclick = async () => {
-  const memoArea = document.getElementById('memoArea');
-  if (!memoArea) return;
-  const val = memoArea.value;
+    if (!memoArea) return;
+    const val = memoArea.value;
+    let savedWhere = [];
 
-  // 1) localStorage → 2) IndexedDB の順で試す
-  const memoKey = 'glass_memo_v1';
-  let savedWhere = [];
-  try { if (localStorage.setItem(memoKey, val) || true) savedWhere.push('localStorage'); } catch {}
+    // 1) localStorage
+    try { if (lsSet(memoKey, val)) savedWhere.push('localStorage'); } catch{}
 
-  if (!savedWhere.length) {
-    try {
-      const req = indexedDB.open('glassDB', 1);
-      const db = await new Promise(res=>{
-        req.onupgradeneeded = ()=> req.result.createObjectStore('kv');
-        req.onsuccess = ()=> res(req.result);
-        req.onerror = ()=> res(null);
-      });
-      if (db) {
-        await new Promise(res=>{
-          const tx = db.transaction('kv','readwrite');
-          tx.objectStore('kv').put(val, memoKey);
-          tx.oncomplete = ()=> res();
-          tx.onerror = ()=> res();
-        });
-        savedWhere.push('IndexedDB');
-      }
-    } catch {}
-  }
+    // 2) IndexedDB
+    if (!savedWhere.length) {
+      try { await idbInit(); if (await idbSet(memoKey, val)) savedWhere.push('IndexedDB'); } catch{}
+    }
 
-  // 3) 常に .txt ダウンロード（主保存物）
-  const h1 = (val.match(/^#\s*(.+)$/m) || [,''])[1] || `memo-${new Date().toISOString().slice(0,10)}`;
-  const name = (h1.replace(/[\\/:*?"<>|]/g,'_').trim().slice(0,80) || 'memo') + '.txt';
-  const dlOK = downloadTxt(val, name);
+    // 3) .txt ダウンロード
+    const name = memoFilename();
+    const dlOK = downloadTxt(val, name);
 
-  // 4) フィードバック（何に保存できたか表示）
-  const okParts = [...savedWhere, dlOK ? 'DL' : null].filter(Boolean);
-  saveMemoBtn.textContent = okParts.length ? `保存OK：${okParts.join(' + ')}` : '保存失敗';
-  setTimeout(()=> saveMemoBtn.textContent = '保存', 1600);
-};
-
+    const okParts = [...savedWhere, dlOK ? 'DL' : null].filter(Boolean);
+    saveMemoBtn.textContent = okParts.length ? `保存OK：${okParts.join(' + ')}` : '保存失敗';
+    setTimeout(()=> saveMemoBtn.textContent = '保存', 1600);
+  };
 
   if(clearMemoBtn) clearMemoBtn.onclick=()=>{ 
     if(!memoArea) return; 
@@ -268,94 +242,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if(memoArea) memoArea.addEventListener('input', ()=>{ if(tocTimer) clearTimeout(tocTimer); tocTimer=setTimeout(()=>buildTOC(memoArea.value||''), 250); });
   buildTOC((memoArea && memoArea.value)||'');
 
-  // HTML用ファイル名（H1優先 → なければ日付）
-function memoHtmlFilename() {
-  const text = (memoArea && memoArea.value) || '';
-  const m = text.match(/^#\s*(.+)$/m);
-  const base = m ? m[1] : `memo-${new Date().toISOString().slice(0,10)}`;
-  const safe = base.replace(/[\\/:*?"<>|]/g,'_').trim().slice(0,80) || 'memo';
-  return `${safe}.html`;
-}
-function memoTitle() {
-  const text = (memoArea && memoArea.value) || '';
-  const m = text.match(/^#\s*(.+)$/m);
-  return (m ? m[1] : 'Memo');
-}
-
-  function markdownToHtmlBody(md) {
-  const toStr = (v)=> typeof v==='string'? v : (v==null? '' : String(v));
-  const fallback = (() => {
-    const esc = (s)=>toStr(s).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
-    let t = esc(md||'');
-    t = t.replace(/^######\s?(.*)$/gm, '<h6>$1</h6>')
-         .replace(/^#####\s?(.*)$/gm,  '<h5>$1</h5>')
-         .replace(/^####\s?(.*)$/gm,   '<h4>$1</h4>')
-         .replace(/^###\s?(.*)$/gm,    '<h3>$1</h3>')
-         .replace(/^##\s?(.*)$/gm,     '<h2>$1</h2>')
-         .replace(/^#\s?(.*)$/gm,      '<h1>$1</h1>')
-         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-         .replace(/\*(.+?)\*/g,     '<em>$1</em>')
-         .replace(/`([^`]+)`/g,     '<code>$1</code>')
-         .replace(/^\-\s+(.*)$/gm, '<li>$1</li>')
-         .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>')
-         .replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
-    return `<p>${t}</p>`;
-  })();
-
-  try {
-    if (typeof window.marked !== 'undefined') {
-      marked.setOptions({ mangle:false, headerIds:false });
-      const renderer = new marked.Renderer();
-      renderer.heading = (text, level, raw) => {
-        const id = slugify((raw||text));
-        return `<h${level} id="${id}">${toStr(text)}</h${level}>\n`;
-      };
-      return marked.parse(toStr(md||''), { renderer });
-    }
-  } catch(e){ console.error(e); }
-  return fallback;
-}
-
-  // シンプルなスタンドアロンHTMLとして書き出す（軽量CSSを内蔵）
-function buildStandaloneHtml(title, innerHtml) {
-  const css = `
-    body{margin:24px auto;max-width:800px;padding:0 16px;line-height:1.75;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,'Apple Color Emoji','Segoe UI Emoji';color:#111;}
-    h1,h2,h3,h4,h5,h6{line-height:1.3;margin:1.6em 0 .6em}
-    h1{font-size:2rem} h2{font-size:1.6rem} h3{font-size:1.3rem}
-    pre{padding:12px;background:#f5f5f5;overflow:auto;border-radius:8px}
-    code{background:#f5f5f5;padding:.2em .35em;border-radius:4px}
-    blockquote{margin:1em 0;padding:.5em 1em;border-left:4px solid #ddd;color:#555;background:#fafafa}
-    ul,ol{padding-left:1.4em}
-    a{color:#2563eb;text-decoration:none} a:hover{text-decoration:underline}
-    hr{border:none;border-top:1px solid #e5e5e5;margin:2em 0}
-  `.trim();
-  return [
-    '<!doctype html>',
-    '<html lang="ja"><head>',
-    '<meta charset="utf-8" />',
-    `<title>${title.replace(/</g,'&lt;')}</title>`,
-    '<meta name="viewport" content="width=device-width,initial-scale=1" />',
-    `<style>${css}</style>`,
-    '</head><body>',
-    innerHtml,
-    '</body></html>'
-  ].join('\n');
-}
-
-  const exportHtmlBtn = document.getElementById('exportHtml');
-if (exportHtmlBtn) exportHtmlBtn.onclick = () => {
-  if (!memoArea) return;
-  const md = memoArea.value;
-  const htmlBody = markdownToHtmlBody(md);
-  const doc = buildStandaloneHtml(memoTitle(), htmlBody);
-  const name = memoHtmlFilename();
-  const ok = download(doc, name);
-  exportHtmlBtn.textContent = ok ? 'HTML保存済' : 'HTML保存失敗';
-  setTimeout(()=> exportHtmlBtn.textContent = 'HTML保存', 1400);
-};
-
-
-  // ツールバー（ワンクリック挿入）
+  // ワンクリック挿入ツールバー
   const TB = {
     wrap(selPrefix, selSuffix, placeholder=''){
       const ta=memoArea; if(!ta) return;
@@ -430,6 +317,87 @@ if (exportHtmlBtn) exportHtmlBtn.onclick = () => {
     else TB[act] && TB[act]();
   });
 
+  /* ===== Markdown → HTML 変換 & HTML書き出し ===== */
+  function memoHtmlFilename() {
+    const text = (memoArea && memoArea.value) || '';
+    const m = text.match(/^#\s*(.+)$/m);
+    const base = m ? m[1] : `memo-${new Date().toISOString().slice(0,10)}`;
+    const safe = base.replace(/[\\/:*?"<>|]/g,'_').trim().slice(0,80) || 'memo';
+    return `${safe}.html`;
+  }
+  function memoTitle() {
+    const text = (memoArea && memoArea.value) || '';
+    const m = text.match(/^#\s*(.+)$/m);
+    return (m ? m[1] : 'Memo');
+  }
+  function markdownToHtmlBody(md) {
+    const fallback = (() => {
+      const esc = (s)=>toStr(s).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+      let t = esc(md||'');
+      t = t.replace(/^######\s?(.*)$/gm, '<h6>$1</h6>')
+           .replace(/^#####\s?(.*)$/gm,  '<h5>$1</h5>')
+           .replace(/^####\s?(.*)$/gm,   '<h4>$1</h4>')
+           .replace(/^###\s?(.*)$/gm,    '<h3>$1</h3>')
+           .replace(/^##\s?(.*)$/gm,     '<h2>$1</h2>')
+           .replace(/^#\s?(.*)$/gm,      '<h1>$1</h1>')
+           .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+           .replace(/\*(.+?)\*/g,     '<em>$1</em>')
+           .replace(/`([^`]+)`/g,     '<code>$1</code>')
+           .replace(/^\-\s+(.*)$/gm, '<li>$1</li>')
+           .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>')
+           .replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
+      return `<p>${t}</p>`;
+    })();
+    try {
+      if (typeof window.marked !== 'undefined') {
+        marked.setOptions({ mangle:false, headerIds:false });
+        const renderer = new marked.Renderer();
+        renderer.heading = (text, level, raw) => {
+          const id = slugify((raw||text));
+          return `<h${level} id="${id}">${toStr(text)}</h${level}>\n`;
+        };
+        return marked.parse(toStr(md||''), { renderer });
+      }
+    } catch(e){ console.error(e); }
+    return fallback;
+  }
+  function buildStandaloneHtml(title, innerHtml) {
+    const css = `
+      body{margin:24px auto;max-width:800px;padding:0 16px;line-height:1.75;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,'Apple Color Emoji','Segoe UI Emoji';color:#111;}
+      h1,h2,h3,h4,h5,h6{line-height:1.3;margin:1.6em 0 .6em}
+      h1{font-size:2rem} h2{font-size:1.6rem} h3{font-size:1.3rem}
+      pre{padding:12px;background:#f5f5f5;overflow:auto;border-radius:8px}
+      code{background:#f5f5f5;padding:.2em .35em;border-radius:4px}
+      blockquote{margin:1em 0;padding:.5em 1em;border-left:4px solid #ddd;color:#555;background:#fafafa}
+      ul,ol{padding-left:1.4em}
+      a{color:#2563eb;text-decoration:none} a:hover{text-decoration:underline}
+      hr{border:none;border-top:1px solid #e5e5e5;margin:2em 0}
+      img{max-width:100%;height:auto}
+      table{border-collapse:collapse} td,th{border:1px solid #e5e5e5;padding:.4em .6em}
+    `.trim();
+    return [
+      '<!doctype html>',
+      '<html lang="ja"><head>',
+      '<meta charset="utf-8" />',
+      `<title>${title.replace(/</g,'&lt;')}</title>`,
+      '<meta name="viewport" content="width=device-width,initial-scale=1" />',
+      `<style>${css}</style>`,
+      '</head><body>',
+      innerHtml,
+      '</body></html>'
+    ].join('\n');
+  }
+  if (exportHtmlBtn) exportHtmlBtn.onclick = () => {
+    if (!memoArea) return;
+    const md = memoArea.value;
+    const htmlBody = markdownToHtmlBody(md);
+    const doc = buildStandaloneHtml(memoTitle(), htmlBody);
+    const name = memoHtmlFilename();
+    const ok = download(doc, name);
+    exportHtmlBtn.textContent = ok ? 'HTML保存済' : 'HTML保存失敗';
+    setTimeout(()=> exportHtmlBtn.textContent = 'HTML保存', 1400);
+  };
+
   /* ===== ToDo ===== */
   const todoKey='glass_todos_v1';
   const todoInput=document.getElementById('todoInput');
@@ -484,7 +452,7 @@ if (exportHtmlBtn) exportHtmlBtn.onclick = () => {
   const workLen=document.getElementById('workLen');
   const breakLen=document.getElementById('breakLen');
   const timerDisplay=document.getElementById('timerDisplay');
-  const phaseLabel=document.getElementById('phaseLabel');
+  const phaseLabel=document.getElementById('phaseLabel'); // HTMLに無くても問題なし
   const startBtn=document.getElementById('startTimer');
   const pauseTBtn=document.getElementById('pauseTimer');
   const resetBtn=document.getElementById('resetTimer');
@@ -546,7 +514,6 @@ if (exportHtmlBtn) exportHtmlBtn.onclick = () => {
   const saveProgressBtn=document.getElementById('saveProgress');
   let prog={goal:1000,current:0,auto:true};
   try{ prog=Object.assign(prog, JSON.parse(lsGet(pKey,'{}')) ); }catch{}
-  // IndexedDB からの追復元
   idbInit().then(()=> idbGet(pKey)).then(v=>{
     if(typeof v === 'string'){
       try{
@@ -651,13 +618,20 @@ if (exportHtmlBtn) exportHtmlBtn.onclick = () => {
   initSettings();
 
   // ギア開閉（外側クリックで閉じる、ショートカット付）
-  if(openBtn && panel){
-    openBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); panel.classList.toggle('active'); });
-    document.addEventListener('click', (e)=>{ if(panel.classList.contains('active') && !panel.contains(e.target) && !openBtn.contains(e.target)){ panel.classList.remove('active'); } });
+  const openBtnEl=document.getElementById('openSettings');
+  if(openBtnEl && panel){
+    openBtnEl.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); panel.classList.toggle('active'); });
+    document.addEventListener('click', (e)=>{ if(panel.classList.contains('active') && !panel.contains(e.target) && !openBtnEl.contains(e.target)){ panel.classList.remove('active'); } });
     document.addEventListener('keydown', (e)=>{ if((e.ctrlKey||e.metaKey) && e.key === '.'){ panel.classList.toggle('active'); } });
   }
 
   /* ===== Backdrop フォールバック ===== */
   const supportsBackdrop = CSS.supports('backdrop-filter','blur(10px)') || CSS.supports('-webkit-backdrop-filter','blur(10px)');
   if(!supportsBackdrop){ document.querySelectorAll('.glass').forEach(el=> el.style.background='rgba(255,255,255,.9)'); }
+
+  // 初期化確認
+  console.log('[init] app.js loaded, buttons:', {
+    save: !!document.getElementById('saveMemo'),
+    exportHtml: !!document.getElementById('exportHtml')
+  });
 });
