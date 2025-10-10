@@ -619,6 +619,8 @@ if (exportPdfBtn) exportPdfBtn.onclick = async () => {
   const host = document.createElement('div');
   Object.assign(host.style, {
     position: 'fixed',
+    left: '-9999px',
+    top: '-9999px',
     width: '794px',   // A4縦のプリンタ解像度基準に寄せたい場合はこの幅を調整
     maxWidth: '794px'
   });
