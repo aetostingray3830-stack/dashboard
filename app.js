@@ -128,18 +128,31 @@ document.addEventListener('DOMContentLoaded', () => {
 function postprocessHeadingMarkers(html) {
   let s = String(html ?? '');
 
-  // ⟦H:level:id⟧...⟦/H⟧
-  s = s.replace(/⟦H:(\d):([^\u27E7\]]+)⟧([\s\S]*?)⟦\/H⟧/g,
+  // ⟦…⟧ が <p>…</p> に入っているケース
+  s = s.replace(
+    /<p>\s*⟦H:(\d):([^⟧\]]+)⟧([\s\S]*?)⟦\/H⟧\s*<\/p>/g,
+    (_, lvl, id, inner) => `<h${lvl} id="${id}">${inner}</h${lvl}>`
+  );
+  // 素の ⟦…⟧
+  s = s.replace(
+    /⟦H:(\d):([^⟧\]]+)⟧([\s\S]*?)⟦\/H⟧/g,
     (_, lvl, id, inner) => `<h${lvl} id="${id}">${inner}</h${lvl}>`
   );
 
-  // [H:level:id]...[/H]
-  s = s.replace(/\[H:(\d):([^\]]+)\]([\s\S]*?)\[\/H\]/g,
+  // [] 版（段落で包まれたケース）
+  s = s.replace(
+    /<p>\s*\[H:(\d):([^\]]+)\]([\s\S]*?)\[\/H\]\s*<\/p>/g,
+    (_, lvl, id, inner) => `<h${lvl} id="${id}">${inner}</h${lvl}>`
+  );
+  // [] 版（素の並び）
+  s = s.replace(
+    /\[H:(\d):([^\]]+)\]([\s\S]*?)\[\/H\]/g,
     (_, lvl, id, inner) => `<h${lvl} id="${id}">${inner}</h${lvl}>`
   );
 
   return s;
 }
+
 
   // ========== インラインMarkdown（見出し内などで使う軽量処理） ==========
   function inlineMdToHtml(s){
