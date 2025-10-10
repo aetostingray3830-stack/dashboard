@@ -8,6 +8,7 @@
   <!-- 外部ライブラリ -->
   <script src="https://www.youtube.com/iframe_api"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js" defer></script>
   <!-- アプリ本体 -->
   <script src="./app.js?v=4" defer></script>
 </head>
@@ -98,6 +99,7 @@
             <button class="tbtn" data-act="italic"><i>I</i></button>
             <button class="tbtn" data-act="strike"><s>S</s></button>
             <button class="tbtn" data-act="code">code</button>
+            <button class="tbtn" data-act="color">🎨</button> 
           </div>
           <div class="tgroup">
             <button class="tbtn" data-act="quote">引用</button>
@@ -117,6 +119,7 @@
           <button class="btn" id="previewMode">👁 プレビュー</button>
           <button class="btn" id="saveMemo">保存</button>
           <button class="btn" id="exportHtml">HTML保存</button> 
+          <button class="btn" id="exportPdf">PDF保存</button>
           <button class="btn" id="clearMemo">消去</button>
         </div>
       </div>
