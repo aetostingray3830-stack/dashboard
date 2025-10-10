@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (/message port closed/i.test(msg)) e.preventDefault();
   });
 
-  /* ===== 永続化：localStorage → IndexedDB → DL ===== */
+  /* ===== 永続化：localStorage → IndexedDB ===== */
   const lsGet = (k, def='') => { try{ const v = localStorage.getItem(k); return v===null? def : v; }catch{ return def; } };
   const lsSet = (k, v) => { try{ localStorage.setItem(k, v); return true; }catch{ return false; } };
 
@@ -92,6 +92,11 @@ document.addEventListener('DOMContentLoaded', () => {
     return toStr(md).replace(/＃/g, '#').replace(/\r\n?/g, '\n');
   }
 
+  // TXT保存用：<font> タグを除去（中身は残す）
+  function stripFontTags(md){
+    return toStr(md).replace(/<\/?font\b[^>]*>/gi, '');
+  }
+
   // 見出しだけを先にHTML化して <font> をエスケープさせない前処理
   function preprocessHeadings(md){
     const src = String(md ?? '');
@@ -99,10 +104,8 @@ document.addEventListener('DOMContentLoaded', () => {
       /^ {0,3}(#{1,6})\s+([\s\S]*?)\s*#*\s*$/gm,
       (m, hashes, innerMd) => {
         const level = hashes.length;
-        // id はタグを除去したテキストから作る
         const plain = String(innerMd).replace(/<[^>]*>/g, '');
         const id = slugify(plain);
-        // 見出し本文はインラインとしてパース（<font> 等の素HTMLをそのまま通す）
         const innerHtml = (window.marked && marked.parseInline)
           ? marked.parseInline(innerMd)
           : innerMd;
@@ -111,10 +114,7 @@ document.addEventListener('DOMContentLoaded', () => {
     );
   }
 
-  // marked レンダラー（今回はカスタムheading不要。前処理で済ませる）
-  function createRenderer(){
-    return new marked.Renderer();
-  }
+  function createRenderer(){ return new marked.Renderer(); }
 
   // ファイル名/タイトル
   function memoTxtFilename() {
@@ -184,7 +184,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const fallbackHtml = (() => {
       let t = escHtml(md);
-      // ← 既存の <font color> を許可（エスケープ戻し）
       t = t.replace(/&lt;font(\s+[^&]*)&gt;/g, '<font$1>')
            .replace(/&lt;\/font&gt;/g, '</font>');
       t = t
@@ -207,7 +206,6 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       if (typeof window.marked !== 'undefined') {
         marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
-        // 見出しは前処理でHTML化済みなので、そのままパース
         html = marked.parse(mdPre);
       }
     } catch (e) {
@@ -238,18 +236,19 @@ document.addEventListener('DOMContentLoaded', () => {
   if(editBtn)    editBtn.onclick    = showEdit;
   if(previewBtn) previewBtn.onclick = showPreview;
 
-  // .txt 保存（常にDLしつつ、可能ならブラウザにも保存）
+  // .txt 保存：ブラウザ保存＋ダウンロード（DLは <font> を全部除去）
   if (saveMemoBtn) saveMemoBtn.onclick = async () => {
     if (!memoArea) return;
-    const val = memoArea.value;
+    const val = memoArea.value;             // 本体（色タグ含む）
+    const txtOut = stripFontTags(val);      // DL用（色タグ除去）
     let savedWhere = [];
     try { if (lsSet(memoKey, val)) savedWhere.push('localStorage'); } catch{}
     if (!savedWhere.length) {
       try { await idbInit(); if (await idbSet(memoKey, val)) savedWhere.push('IndexedDB'); } catch{}
     }
     const name = memoTxtFilename();
-    const dlOK = downloadTxt(val, name);
-    const okParts = [...savedWhere, dlOK ? 'DL' : null].filter(Boolean);
+    const dlOK = downloadTxt(txtOut, name); // ★ ダウンロードはフォントタグ無し
+    const okParts = [...savedWhere, dlOK ? 'DL(タグ除去)' : null].filter(Boolean);
     saveMemoBtn.textContent = okParts.length ? `保存OK：${okParts.join(' + ')}` : '保存失敗';
     setTimeout(()=> saveMemoBtn.textContent = '保存', 1600);
   };
@@ -273,40 +272,33 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   buildTOC((memoArea && normalizeMd(memoArea.value))||'');
 
-  /* ===== ワンクリック挿入ツールバー ===== */
-
-  // ---- 色ユーティリティ（選択範囲に color 適用/解除） ----
+  /* ===== ワンクリック挿入ツールバー（色対応） ===== */
   function applyColorToSelection(hex){
     const ta = memoArea; if(!ta) return;
     const v = ta.value;
     let { selectionStart:s, selectionEnd:e } = ta;
 
-    // 現在行の範囲
+    // 現在行
     const lineStart = v.lastIndexOf('\n', s-1) + 1;
     const nl = v.indexOf('\n', s);
     const lineEnd = nl === -1 ? v.length : nl;
     const line = v.slice(lineStart, lineEnd);
 
-    // 見出し行なら本文の絶対インデックスを求める
+    // 見出し本文範囲
     const m = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
-    let contentAbsStart = null, contentAbsEnd = null;
     if (m) {
       const hashes = m[1];
       const hashPos = line.indexOf(hashes) + hashes.length;
       const afterHashSpace = (line.slice(hashPos).match(/^\s*/)||[''])[0].length;
       const contentStartInLine = hashPos + afterHashSpace;
-
       const tail = (line.match(/\s*#*\s*$/)||[''])[0];
       const contentEndInLine = Math.max(contentStartInLine, line.length - tail.length);
+      const contentAbsStart = lineStart + contentStartInLine;
+      const contentAbsEnd   = lineStart + contentEndInLine;
 
-      contentAbsStart = lineStart + contentStartInLine;
-      contentAbsEnd   = lineStart + contentEndInLine;
-
-      // 1) 選択が空 → 見出し本文全体に色
       if (s === e) {
-        s = contentAbsStart; e = contentAbsEnd;
+        s = contentAbsStart; e = contentAbsEnd; // 見出し本文全体
       } else {
-        // 2) 選択が見出し行と重なる → 本文範囲にクリップ
         const overlapsThisLine = !(e <= lineStart || s >= lineEnd);
         if (overlapsThisLine) {
           const ns = Math.max(s, contentAbsStart);
@@ -315,24 +307,21 @@ document.addEventListener('DOMContentLoaded', () => {
           else { s = contentAbsStart; e = contentAbsEnd; }
         }
       }
-    } else {
-      // 見出しでなく空選択ならプレースホルダ
-      if (s === e) {
-        const before = v.slice(0, s), after = v.slice(e);
-        const selected = 'テキスト';
-        ta.value = `${before}<font color="${hex}">${selected}</font>${after}`;
-        const pos = (before + `<font color="${hex}">${selected}</font>`).length;
-        ta.focus(); ta.setSelectionRange(pos, pos);
-        ta.dispatchEvent(new Event('input'));
-        return;
-      }
+    } else if (s === e) {
+      // 通常行で空選択ならプレースホルダ
+      const before = v.slice(0, s), after = v.slice(e);
+      const selected = 'テキスト';
+      ta.value = `${before}<font color="${hex}">${selected}</font>${after}`;
+      const pos = (before + `<font color="${hex}">${selected}</font>`).length;
+      ta.focus(); ta.setSelectionRange(pos, pos);
+      ta.dispatchEvent(new Event('input'));
+      return;
     }
 
     const before = v.slice(0, s);
     const selected = v.slice(s, e) || 'テキスト';
     const after = v.slice(e);
     ta.value = `${before}<font color="${hex}">${selected}</font>${after}`;
-
     const pos = (before + `<font color="${hex}">${selected}</font>`).length;
     ta.focus(); ta.setSelectionRange(pos, pos);
     ta.dispatchEvent(new Event('input'));
@@ -352,8 +341,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ta.dispatchEvent(new Event('input'));
       return;
     }
-
-    // 選択が空の場合：カーソルが <font>…</font> 内ならそのタグだけ除去
+    // 空選択：カーソルが <font>…</font> 内ならその1組を剥がす
     const openIdx = v.lastIndexOf('<font', s);
     const closeIdx = v.indexOf('</font>', s);
     if (openIdx !== -1 && closeIdx !== -1) {
@@ -364,31 +352,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const pos = openIdx + inner.length;
         ta.focus(); ta.setSelectionRange(pos,pos);
         ta.dispatchEvent(new Event('input'));
-        return;
       }
     }
-    // 何もできなければ無視
   }
 
-  // ---- 色パレットのポップオーバー ----
+  // パレットUI
   let colorPopover = null;
-  const PALETTE = [
-    '#ef4444', // red
-    '#f59e0b', // amber
-    '#10b981', // green
-    '#3b82f6', // blue
-    '#8b5cf6', // violet
-    '#ec4899', // pink
-    '#111827', // gray-900
-    '#000000', // black
-    '#ffffff'  // white
-  ];
-
+  const PALETTE = ['#ef4444','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#111827','#000000','#ffffff'];
   function closeColorPopover(){ if(colorPopover){ colorPopover.remove(); colorPopover=null; document.removeEventListener('click', outsideClose, true); } }
-  function outsideClose(e){
-    if(colorPopover && !colorPopover.contains(e.target)) closeColorPopover();
-  }
-
+  function outsideClose(e){ if(colorPopover && !colorPopover.contains(e.target)) closeColorPopover(); }
   function showColorPopover(anchorBtn){
     closeColorPopover();
     const rect = anchorBtn.getBoundingClientRect();
@@ -400,8 +372,6 @@ document.addEventListener('DOMContentLoaded', () => {
       padding:'8px', borderRadius:'10px', backdropFilter:'blur(10px)', WebkitBackdropFilter:'blur(10px)',
       boxShadow:'0 10px 30px rgba(0,0,0,.25)', zIndex: 9999, display:'flex', alignItems:'center', gap:'6px'
     });
-
-    // スウォッチ
     PALETTE.forEach(hex=>{
       const b = document.createElement('button');
       Object.assign(b.style, {
@@ -412,8 +382,6 @@ document.addEventListener('DOMContentLoaded', () => {
       b.onclick = (e)=>{ e.preventDefault(); applyColorToSelection(hex); closeColorPopover(); };
       pop.appendChild(b);
     });
-
-    // カスタム
     const custom = document.createElement('button');
     custom.textContent = '…';
     Object.assign(custom.style, {
@@ -432,8 +400,6 @@ document.addEventListener('DOMContentLoaded', () => {
       input.click();
     };
     pop.appendChild(custom);
-
-    // 解除
     const clear = document.createElement('button');
     clear.textContent = '×';
     Object.assign(clear.style, {
@@ -443,13 +409,13 @@ document.addEventListener('DOMContentLoaded', () => {
     clear.title = '色を解除';
     clear.onclick = (e)=>{ e.preventDefault(); removeColorFromSelection(); closeColorPopover(); };
     pop.appendChild(clear);
-
     document.body.appendChild(pop);
     colorPopover = pop;
     setTimeout(()=> document.addEventListener('click', outsideClose, true), 0);
   }
 
-  // ---- Markdown挿入ツール群 ----
+  // ツールバー
+  const toolbarLeft = document.querySelector('.toolbar-left');
   const TB = {
     wrap(selPrefix, selSuffix, placeholder=''){
       const ta=memoArea; if(!ta) return;
@@ -514,14 +480,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const pos = s + 5; ta.focus(); ta.setSelectionRange(pos,pos); ta.dispatchEvent(new Event('input'));
     },
     fence(){ TB.wrap('\n```txt\n','\n```\n','ここにコード'); },
-
-    // 追加：色パレット（1クリック挿入）と解除
     color(btn){ showColorPopover(btn); },
     uncolor(){ removeColorFromSelection(); }
   };
 
-  // ツールバークリック
-  const toolbarLeft = document.querySelector('.toolbar-left');
   if (toolbarLeft) toolbarLeft.addEventListener('click', (e)=>{
     const btn = e.target.closest('button'); if(!btn) return;
     const act = btn.dataset.act; const lvl = parseInt(btn.dataset.level||'0',10);
@@ -538,7 +500,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const fallback = (() => {
       let t = escHtml(text);
-      // <font> を許可
       t = t.replace(/&lt;font(\s+[^&]*)&gt;/g, '<font$1>')
            .replace(/&lt;\/font&gt;/g, '</font>');
       t = t
@@ -604,95 +565,80 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(()=> exportHtmlBtn.textContent = 'HTML保存', 1400);
   };
 
-  // ★ ここだけ差し替え
-if (exportPdfBtn) exportPdfBtn.onclick = async () => {
-  if (!memoArea) return;
+  // ★ PDF：iframe非使用。非表示ホストに完全HTMLを構築→html2pdfでその要素を保存
+  if (exportPdfBtn) exportPdfBtn.onclick = async () => {
+    if (!memoArea) return;
 
-  // 1) HTML出力と同じ完全HTMLを生成
-  const md = memoArea.value;
-  const htmlBody = markdownToHtmlBody(md);              // 本文
-  const docHtml  = buildStandaloneHtml(memoTitle(), htmlBody); // CSS込みの完全HTML
+    const md = memoArea.value;
+    const htmlBody = markdownToHtmlBody(md);
+    const docHtml  = buildStandaloneHtml(memoTitle(), htmlBody);
 
-  // 2) DOMParserで <body> と <style> を取り出して、非表示ホストに組み立てる
-  const parsed = new DOMParser().parseFromString(docHtml, 'text/html');
+    const parsed = new DOMParser().parseFromString(docHtml, 'text/html');
+    const host = document.createElement('div');
+    Object.assign(host.style, {
+      position: 'fixed', left: '-9999px', top: '-9999px',
+      width: '794px', maxWidth:'794px', background:'#fff'
+    });
 
-  const host = document.createElement('div');
-  Object.assign(host.style, {
-    position: 'fixed',
-    left: '-9999px',
-    top: '-9999px',
-    width: '794px',   // A4縦のプリンタ解像度基準に寄せたい場合はこの幅を調整
-    maxWidth: '794px'
-  });
+    // CSS(style)を移植
+    parsed.head.querySelectorAll('style').forEach(st => {
+      const copy = document.createElement('style');
+      copy.textContent = st.textContent || '';
+      host.appendChild(copy);
+    });
+    // 本文を移植
+    Array.from(parsed.body.childNodes).forEach(node => host.appendChild(node.cloneNode(true)));
+    // 画像CORS
+    host.querySelectorAll('img').forEach(img => {
+      if (!img.getAttribute('crossorigin')) img.setAttribute('crossorigin', 'anonymous');
+    });
 
-  // head内の <style> を取り込む（@font-face や本文スタイルもPDF側に反映）
-  parsed.head.querySelectorAll('style').forEach(st => {
-    const copy = document.createElement('style');
-    copy.textContent = st.textContent || '';
-    host.appendChild(copy);
-  });
+    document.body.appendChild(host);
 
-  // body内容を移植
-  Array.from(parsed.body.childNodes).forEach(node => host.appendChild(node.cloneNode(true)));
+    const waitForReady = async () => {
+      const imgs = Array.from(host.querySelectorAll('img'));
+      await Promise.all(imgs.map(img => (img.complete ? Promise.resolve() : new Promise(res => {
+        img.addEventListener('load', res, { once:true });
+        img.addEventListener('error', res, { once:true });
+      }))));
+      if (document.fonts && document.fonts.ready) {
+        try { await document.fonts.ready; } catch {}
+      }
+    };
 
-  // 画像のCORS対策：crossOrigin=anonymous を付けておくと html2canvas が拾いやすい
-  host.querySelectorAll('img').forEach(img => {
-    if (!img.getAttribute('crossorigin')) img.setAttribute('crossorigin', 'anonymous');
-  });
+    const filename = memoPdfFilename();
 
-  document.body.appendChild(host);
-
-  // 3) フォント・画像ロードを待つ
-  const waitForReady = async () => {
-    const imgs = Array.from(host.querySelectorAll('img'));
-    await Promise.all(imgs.map(img => {
-      if (img.complete) return Promise.resolve();
-      return new Promise(res => {
-        img.addEventListener('load', res, { once: true });
-        img.addEventListener('error', res, { once: true });
-      });
-    }));
-    if (document.fonts && document.fonts.ready) {
-      try { await document.fonts.ready; } catch {}
+    try {
+      await waitForReady();
+      if (window.html2pdf) {
+        await html2pdf().set({
+          margin: 10,
+          filename,
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: {
+            scale: 2,
+            useCORS: true,
+            allowTaint: true,
+            logging: false,
+            windowWidth: host.scrollWidth,
+            windowHeight: host.scrollHeight,
+            backgroundColor: '#ffffff'
+          },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        }).from(host).save();
+        exportPdfBtn.textContent = 'PDF保存済';
+      } else {
+        alert('html2pdf.js が読み込まれていません。<head>のCDNを確認してください。');
+        exportPdfBtn.textContent = 'PDF保存失敗';
+      }
+    } catch (e) {
+      console.error(e);
+      exportPdfBtn.textContent = 'PDF保存失敗';
+    } finally {
+      setTimeout(()=> exportPdfBtn.textContent = 'PDF保存', 1400);
+      host.remove();
     }
   };
-
-  const filename = memoPdfFilename();
-
-  try {
-    await waitForReady();
-    if (window.html2pdf) {
-      await html2pdf().set({
-        margin: 10,
-        filename,
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: {
-          scale: 2,
-          useCORS: true,
-          allowTaint: true,
-          logging: false,
-          // ホスト要素の実寸に合わせるとレイアウトのズレを防ぎやすい
-          windowWidth: host.scrollWidth,
-          windowHeight: host.scrollHeight,
-          backgroundColor: '#ffffff' // 透明を避けたい場合
-        },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-      }).from(host).save();
-      exportPdfBtn.textContent = 'PDF保存済';
-    } else {
-      alert('html2pdf.js が読み込まれていません。<head>にCDNタグを追加してください。');
-      exportPdfBtn.textContent = 'PDF保存失敗';
-    }
-  } catch (e) {
-    console.error(e);
-    exportPdfBtn.textContent = 'PDF保存失敗';
-  } finally {
-    setTimeout(()=> exportPdfBtn.textContent = 'PDF保存', 1400);
-    host.remove();
-  }
-};
-
-
 
   /* ===== ToDo ===== */
   const todoKey='glass_todos_v1';
@@ -913,7 +859,7 @@ if (exportPdfBtn) exportPdfBtn.onclick = async () => {
   }
   initSettings();
 
-  // ギア開閉（外側クリックで閉じる、ショートカット付）
+  // ギア開閉
   if(openBtn && panel){
     openBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); panel.classList.toggle('active'); });
     document.addEventListener('click', (e)=>{ if(panel.classList.contains('active') && !panel.contains(e.target) && !openBtn.contains(e.target)){ panel.classList.remove('active'); } });
