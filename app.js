@@ -192,19 +192,34 @@ function fallbackMarkdownToHtml(mdPre){
 
     const lines = b.split('\n');
     if (lines.every(l => /^\s*-\s+/.test(l))) {
-  const items = lines.map(l => {
-    // タスク: - [ ] text / - [x] text
-    const tm = l.match(/^\s*-\s+\[([ xX])\]\s+(.*)$/);
-    if (tm) {
-      const checked = tm[1].toLowerCase() === 'x';
-      return `<li class="task-item"><input type="checkbox" disabled ${checked ? 'checked' : ''}> ${inline(tm[2])}</li>`;
-    }
-    const m = l.match(/^\s*-\s+(.*)$/);
-    return `<li>${inline(m ? m[1] : l)}</li>`;
-  }).join('');
-  out.push(`<ul>${items}</ul>`);
-  continue;
-}
+   // 連続する同種（task / plain）ごとに <ul> を分割
+   const flush = (arr, kind) => {
+     if (!arr.length) return;
+     const items = arr.map(txt => {
+       if (kind === 'task') {
+         const tm = txt.match(/^\s*-\s+\[([ xX])\]\s+(.*)$/);
+         const checked = tm && tm[1].toLowerCase() === 'x';
+         const body = tm ? tm[2] : txt.replace(/^\s*-\s+/, '');
+         return `<li class="task-item"><input type="checkbox" disabled ${checked ? 'checked' : ''}> ${inline(body)}</li>`;
+       }
+       return `<li>${inline(txt.replace(/^\s*-\s+/, ''))}</li>`;
+     }).join('');
+     out.push(`<ul>${items}</ul>`);
+   };
+   let bucket = [];
+   let kind = null; // 'task' | 'plain'
+   for (const l of lines) {
+     const k = /^\s*-\s+\[([ xX])\]\s+/.test(l) ? 'task' : 'plain';
+     if (kind === null || kind === k) {
+       bucket.push(l); kind = k;
+     } else {
+       flush(bucket, kind);
+       bucket = [l]; kind = k;
+     }
+   }
+   flush(bucket, kind);
+   continue;
+ }
 
     out.push(`<p>${inline(b).replace(/\n/g,'<br>')}</p>`);
   }
@@ -596,9 +611,22 @@ function fallbackMarkdownToHtml(mdPre){
 
   /* ===== Markdown → HTML 変換 & HTML/ PDF 書き出し ===== */
   function markdownToHtmlBody(md) {
-  const text0 = normalizeMd(md);
-    const text1 = encodeColorMarkers(text0);
+    const text0 = normalizeMd(md);
+  const text1 = encodeColorMarkers(text0);
  let textPre = preprocessHeadings(text1);
+
+ // --- リスト境界補正 ---
+ // 通常リスト(- ) → タスクリスト(- [ ] / - [x]) の直前に空行を挿入
+ textPre = textPre.replace(
+   /(^|\n)(-\s+(?!\[[ xX]\]).*?)\n(-\s+\[(?: |x|X)\]\s+)/g,
+   '$1$2\n\n$3'
+ );
+ // タスクリスト → 通常リスト の直前にも空行を挿入
+ textPre = textPre.replace(
+   /(^|\n)(-\s+\[(?: |x|X)\]\s+.*)\n(-\s+(?!\[[ xX]\]).+)/g,
+   '$1$2\n\n$3'
+ );
+
  // hタグの直後に空行が無いケースを強制分離
  textPre = textPre.replace(/(<\/h[1-6]>)(?!\n\n)/g, '$1\n\n');
 
