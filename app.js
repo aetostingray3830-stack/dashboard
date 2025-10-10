@@ -50,7 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   // 退避用DL
   const download = (text, filename='backup.txt') => {
-    const blob = new Blob([text], {type:'text/plain'}); const a=document.createElement('a');
+    const blob = new Blob([text], {type:'text/plain;charset=utf-8'}); const a=document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click();
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 0);
   };
@@ -68,6 +68,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const toStr = (v) => (typeof v === 'string' ? v : (v == null ? '' : String(v)));
   const slugify = (str)=> toStr(str).toLowerCase().trim()
     .replace(/[^\w\- \u3000-\u9fff]/g,'').replace(/\s+/g,'-').replace(/-+/g,'-');
+
+  // メモ用の .txt ファイル名（H1 or 日付）
+  function memoFilename() {
+    const text = (memoArea && memoArea.value) || '';
+    const m = text.match(/^#\s*(.+)$/m);
+    const base = m ? m[1] : `memo-${new Date().toISOString().slice(0,10)}`;
+    const safe = base.replace(/[\\/:*?"<>|]/g,'_').trim().slice(0,80) || 'memo';
+    return `${safe}.txt`;
+  }
+  // .txt ダウンロード
+  function downloadTxt(text, name) { download(text, name || 'memo.txt'); }
 
   /* ===== 時計 ===== */
   const clockEl=document.getElementById('clock');
@@ -170,21 +181,21 @@ document.addEventListener('DOMContentLoaded', () => {
   if(editBtn)    editBtn.onclick    = showEdit;
   if(previewBtn) previewBtn.onclick = showPreview;
 
+  // 保存：ブラウザ保存（可能なら）＋ 常に .txt ダウンロード
   if(saveMemoBtn) saveMemoBtn.onclick = async () => {
     if(!memoArea) return;
     const val = memoArea.value;
 
+    // ① ブラウザ保存
     let ok = lsSet(memoKey, val);
     if(!ok){ await idbInit(); ok = await idbSet(memoKey, val); }
 
-    if(ok){
-      saveMemoBtn.textContent='保存済';
-    }else{
-      saveMemoBtn.textContent='保存失敗…バックアップDL';
-      download(val, 'memo-backup.txt');
-      alert('保存がブロックされました。テキストをダウンロードで退避しました。');
-    }
-    setTimeout(()=>saveMemoBtn.textContent='保存', 1200);
+    // ② .txt ダウンロード（必ず）
+    downloadTxt(val, memoFilename());
+
+    // ③ フィードバック
+    saveMemoBtn.textContent = ok ? '保存＆DL完了' : 'DL完了（ローカル保存失敗）';
+    setTimeout(()=> saveMemoBtn.textContent = '保存', 1400);
   };
 
   if(clearMemoBtn) clearMemoBtn.onclick=()=>{ 
