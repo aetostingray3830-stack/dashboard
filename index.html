@@ -438,7 +438,36 @@
       drawBgControls(s);
     }
     initSettings();
-    document.getElementById('openSettings').onclick=()=> panel.classList.toggle('active');
+      document.addEventListener('DOMContentLoaded', () => {
+    const openBtn   = document.getElementById('openSettings');
+    const panel     = document.getElementById('settingsPanel');
+
+    // 念のため存在チェック
+    if (!openBtn || !panel) return;
+
+    // クリックで開閉（バブリング停止で外側クリックと競合しないように）
+    openBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      panel.classList.toggle('active');
+    });
+
+    // パネル外をクリックしたら閉じる
+    document.addEventListener('click', (e) => {
+      if (panel.classList.contains('active') &&
+          !panel.contains(e.target) &&
+          !openBtn.contains(e.target)) {
+        panel.classList.remove('active');
+      }
+    });
+
+    // キーボードショートカット：Ctrl/Cmd + . で開閉
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === '.') {
+        panel.classList.toggle('active');
+      }
+    });
+  });
 
     /* Backdrop fallback */
     const supportsBackdrop = CSS.supports('backdrop-filter','blur(10px)') || CSS.supports('-webkit-backdrop-filter','blur(10px)');
