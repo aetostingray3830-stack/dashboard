@@ -610,6 +610,10 @@ function fallbackMarkdownToHtml(mdPre){
       hr{border:none;border-top:1px solid #e5e5e5;margin:2em 0}
       img{max-width:100%;height:auto}
       table{border-collapse:collapse} td,th{border:1px solid #e5e5e5;padding:.4em .6em}
+/* task list */
+li.task-item{list-style:none}
+li.task-item input[type="checkbox"]{vertical-align:middle;margin-right:.4em}
+
     `.trim();
     return [
       '<!doctype html>',
