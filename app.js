@@ -129,21 +129,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ========== 見出し先行HTML化（id付与、見出し内の装飾OK） ==========
   function preprocessHeadings(md){
-    const src = String(md ?? '');
-    return src.replace(
-      /^ {0,3}(#{1,6})\s+([\s\S]*?)\s*#*\s*$/gm,
-      (m, hashes, innerMd) => {
-        const level = hashes.length;
-        const plain = String(innerMd)
-          .replace(/⟦C:[^⟧]+\⟧/g,'')   // 色マーカー除去
-          .replace(/⟦\/C⟧/g,'')
-          .replace(/<[^>]*>/g,'');     // 既存タグ（font等）も除去
-        const id = slugify(plain);
-        const innerHtml = inlineMdToHtml(innerMd);
-        return `<h${level} id="${id}">${innerHtml}</h${level}>`;
-      }
-    );
-  }
+  const src = String(md ?? '');
+  return src.replace(
+    /^ {0,3}(#{1,6})\s+([\s\S]*?)\s*#*\s*$/gm,
+    (m, hashes, innerMd) => {
+      const level = hashes.length;
+      const plain = String(innerMd)
+        .replace(/⟦C:[^⟧]+\⟧/g,'')
+        .replace(/⟦\/C⟧/g,'')
+        .replace(/<[^>]*>/g,'');
+      const id = slugify(plain);
+      const innerHtml = inlineMdToHtml(innerMd);
+      // ← ここだけ変更：見出しの“後ろ”に空行を入れる
+      return `<h${level} id="${id}">${innerHtml}</h${level}>\n\n`;
+    }
+  );
+}
+
 
   // ========== フォールバックMarkdown（marked不在時） ==========
   function fallbackMarkdownToHtml(mdPre){
