@@ -94,22 +94,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // marked のレンダラー（新旧API両対応）
   function createRenderer(){
-    const renderer = new marked.Renderer();
-    renderer.heading = (a,b,c) => {
-      if (a && typeof a === 'object' && ('text' in a || 'tokens' in a || 'raw' in a || 'depth' in a)) {
-        const token = a;
-        const depth = token.depth || token.level || b || 1;
-        const raw = token.raw || token.text || c || '';
-        const text = token.text || (typeof c === 'string' ? c : raw);
-        const id = slugify(raw || text);
-        return `<h${depth} id="${id}">${escHtml(text)}</h${depth}>\n`;
-      }
-      const text = a, level = b || 1, raw = c || a;
-      const id = slugify(raw || text);
-      return `<h${level} id="${id}">${escHtml(text)}</h${level}>\n`;
+  const renderer = new marked.Renderer();
+
+  renderer.heading = (a,b,c) => {
+    // 共通ヘルパ：行から見出し本文だけを抽出
+    const extractInnerMd = (raw, fallbackText) => {
+      const src = String(raw ?? fallbackText ?? '');
+      const m = src.match(/^ {0,3}(#{1,6})\s+([\s\S]*?)\s*#*\s*$/);
+      return m ? m[2] : String(fallbackText ?? src);
     };
-    return renderer;
-  }
+    const toId = (innerMd) => slugify(String(innerMd).replace(/<[^>]*>/g, ''));
+
+    // 新API: 第1引数が token オブジェクト
+    if (a && typeof a === 'object' && ('raw' in a || 'text' in a || 'depth' in a)) {
+      const token = a;
+      const level = token.depth || token.level || b || 1;
+      const innerMd = extractInnerMd(token.raw, token.text);
+      // インラインとしてパース（<font> などのHTMLをそのまま通す）
+      const innerHtml = (marked.parseInline ? marked.parseInline(innerMd) : innerMd);
+      const id = toId(innerMd);
+      return `<h${level} id="${id}">${innerHtml}</h${level}>\n`;
+    }
+
+    // 旧API: (text, level, raw)
+    const text = a, level = b || 1, raw = c || a;
+    const innerMd = extractInnerMd(raw, text);
+    const innerHtml = (marked.parseInline ? marked.parseInline(innerMd) : innerMd);
+    const id = toId(innerMd);
+    return `<h${level} id="${id}">${innerHtml}</h${level}>\n`;
+  };
+
+  return renderer;
+}
+
 
   // ファイル名/タイトル
   function memoTxtFilename() {
