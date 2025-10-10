@@ -82,10 +82,10 @@ body{background:#0f172a;background-size:cover;background-position:center;transit
 /* ⚙️設定（FAB / パネル） */
 .fab{
   position:fixed; right:14px; bottom:14px; width:44px; height:44px; border-radius:50%;
-  display:grid; place-items:center; font-size:20px; z-index:1000;
+  display:grid; place-items:center; font-size:20px; z-index:1000; pointer-events:auto;
 }
 .settings{
-  position:fixed; right:14px; bottom:64px; width:min(460px,92vw); display:none; z-index:1001;
+  position:fixed; right:14px; bottom:64px; width:min(460px,92vw); display:none; z-index:1001; pointer-events:auto;
 }
 .settings.active{display:block}
 .sep{border:none;height:1px;background:rgba(0,0,0,.15);margin:10px 0}
