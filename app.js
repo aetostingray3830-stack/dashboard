@@ -135,7 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
     (m, hashes, innerMd) => {
       const level = hashes.length;
      const plain = String(innerMd)
-       .replace(/⟦C:[^⟧]+\⟧/g,'')   // ← 色マーカー除去
+       .replace(/⟦C:[^⟧]+⟧/g,'')   // ← 色マーカー除去
        .replace(/⟦\/C⟧/g,'')
        .replace(/<[^>]*>/g,'');     // ← 既存（font等）
       const id = slugify(plain);
@@ -246,9 +246,12 @@ function fallbackMarkdownToHtml(mdPre){
   for(const line of lines){
    const m = line.match(/^ {0,3}(#{1,6})\s+([\s\S]+?)\s*#*\s*$/);
     if(m){
-     // 見出し本文から <font>…</font> を除去して純テキスト化
-     const raw = m[2].replace(/<\/?font\b[^>]*>/gi,'').trim();
-     items.push({level:m[1].length, text:raw});
+     const raw = m[2]
+       .replace(/<\/?font\b[^>]*>/gi,'')   // <font> 剥がす
+       .replace(/⟦C:[^⟧]+⟧/g,'')          // 色マーカー開始を剥がす
+       .replace(/⟦\/C⟧/g,'')               // 色マーカー終了を剥がす
+       .trim();
+      items.push({level:m[1].length, text:raw});
     }
   }
   tocList.innerHTML='';
