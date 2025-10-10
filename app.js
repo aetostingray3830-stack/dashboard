@@ -11,6 +11,36 @@ function onYouTubeIframeAPIReady(){
 }
 window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
 
+
+// 堅牢DL（Blob → msSave → dataURL）
+function download(text, filename='backup.txt') {
+  try {
+    const blob = new Blob([text], {type:'text/plain;charset=utf-8'});
+    if (window.navigator && typeof window.navigator.msSaveBlob === 'function') {
+      window.navigator.msSaveBlob(blob, filename); // 旧Edge/IE
+      return true;
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    return true;
+  } catch(e) {
+    try {
+      const a = document.createElement('a');
+      a.href = 'data:text/plain;charset=utf-8,' + encodeURIComponent(text);
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(()=> a.remove(), 0);
+      return true;
+    } catch(e2){ return false; }
+  }
+}
+const downloadTxt = (t, name)=> download(t, name || 'memo.txt');
+
 /* ========= アプリ初期化 ========= */
 document.addEventListener('DOMContentLoaded', () => {
   /* ====== 永続化：localStorage → IndexedDB → DL ====== */
@@ -182,21 +212,47 @@ document.addEventListener('DOMContentLoaded', () => {
   if(previewBtn) previewBtn.onclick = showPreview;
 
   // 保存：ブラウザ保存（可能なら）＋ 常に .txt ダウンロード
-  if(saveMemoBtn) saveMemoBtn.onclick = async () => {
-    if(!memoArea) return;
-    const val = memoArea.value;
+  if (saveMemoBtn) saveMemoBtn.onclick = async () => {
+  const memoArea = document.getElementById('memoArea');
+  if (!memoArea) return;
+  const val = memoArea.value;
 
-    // ① ブラウザ保存
-    let ok = lsSet(memoKey, val);
-    if(!ok){ await idbInit(); ok = await idbSet(memoKey, val); }
+  // 1) localStorage → 2) IndexedDB の順で試す
+  const memoKey = 'glass_memo_v1';
+  let savedWhere = [];
+  try { if (localStorage.setItem(memoKey, val) || true) savedWhere.push('localStorage'); } catch {}
 
-    // ② .txt ダウンロード（必ず）
-    downloadTxt(val, memoFilename());
+  if (!savedWhere.length) {
+    try {
+      const req = indexedDB.open('glassDB', 1);
+      const db = await new Promise(res=>{
+        req.onupgradeneeded = ()=> req.result.createObjectStore('kv');
+        req.onsuccess = ()=> res(req.result);
+        req.onerror = ()=> res(null);
+      });
+      if (db) {
+        await new Promise(res=>{
+          const tx = db.transaction('kv','readwrite');
+          tx.objectStore('kv').put(val, memoKey);
+          tx.oncomplete = ()=> res();
+          tx.onerror = ()=> res();
+        });
+        savedWhere.push('IndexedDB');
+      }
+    } catch {}
+  }
 
-    // ③ フィードバック
-    saveMemoBtn.textContent = ok ? '保存＆DL完了' : 'DL完了（ローカル保存失敗）';
-    setTimeout(()=> saveMemoBtn.textContent = '保存', 1400);
-  };
+  // 3) 常に .txt ダウンロード（主保存物）
+  const h1 = (val.match(/^#\s*(.+)$/m) || [,''])[1] || `memo-${new Date().toISOString().slice(0,10)}`;
+  const name = (h1.replace(/[\\/:*?"<>|]/g,'_').trim().slice(0,80) || 'memo') + '.txt';
+  const dlOK = downloadTxt(val, name);
+
+  // 4) フィードバック（何に保存できたか表示）
+  const okParts = [...savedWhere, dlOK ? 'DL' : null].filter(Boolean);
+  saveMemoBtn.textContent = okParts.length ? `保存OK：${okParts.join(' + ')}` : '保存失敗';
+  setTimeout(()=> saveMemoBtn.textContent = '保存', 1600);
+};
+
 
   if(clearMemoBtn) clearMemoBtn.onclick=()=>{ 
     if(!memoArea) return; 
