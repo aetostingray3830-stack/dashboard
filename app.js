@@ -153,7 +153,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 
-  function createRenderer(){ return new marked.Renderer(); }
+  function createRenderer(){
+  const r = new marked.Renderer();
+  // GFMのタスクリスト: - [ ] / - [x]
+  r.listitem = function (text, task, checked) {
+    if (task) {
+      return `<li class="task-item"><input type="checkbox" disabled ${checked ? 'checked' : ''}> ${text}</li>\n`;
+    }
+    return `<li>${text}</li>\n`;
+  };
+  return r;
+}
+
 
 // ← normalizeMd / preprocessHeadings のあたりに置く
 function fallbackMarkdownToHtml(mdPre){
@@ -181,13 +192,20 @@ function fallbackMarkdownToHtml(mdPre){
 
     const lines = b.split('\n');
     if (lines.every(l => /^\s*-\s+/.test(l))) {
-      const items = lines.map(l => `<li>${inline(l.replace(/^\s*-\s+/,''))}</li>`).join('');
-      out.push(`<ul>${items}</ul>`); continue;
+  const items = lines.map(l => {
+    // タスク: - [ ] text / - [x] text
+    const tm = l.match(/^\s*-\s+\[([ xX])\]\s+(.*)$/);
+    if (tm) {
+      const checked = tm[1].toLowerCase() === 'x';
+      return `<li class="task-item"><input type="checkbox" disabled ${checked ? 'checked' : ''}> ${inline(tm[2])}</li>`;
     }
-    if (lines.every(l => /^\s*>\s+/.test(l))) {
-      const q = lines.map(l => inline(l.replace(/^\s*>\s+/, ''))).join('<br>');
-      out.push(`<blockquote>${q}</blockquote>`); continue;
-    }
+    const m = l.match(/^\s*-\s+(.*)$/);
+    return `<li>${inline(m ? m[1] : l)}</li>`;
+  }).join('');
+  out.push(`<ul>${items}</ul>`);
+  continue;
+}
+
     out.push(`<p>${inline(b).replace(/\n/g,'<br>')}</p>`);
   }
   return out.join('\n');
@@ -609,7 +627,7 @@ function fallbackMarkdownToHtml(mdPre){
       a{color:#2563eb;text-decoration:none} a:hover{text-decoration:underline}
       hr{border:none;border-top:1px solid #e5e5e5;margin:2em 0}
       img{max-width:100%;height:auto}
-      table{border-collapse:collapse} td,th{border:1px solid #e5e5e5;padding:.4em .6em}
+     table{border-collapse:collapse} td,th{border:1px solid #e5e5e5;padding:.4em .6em}
 /* task list */
 li.task-item{list-style:none}
 li.task-item input[type="checkbox"]{vertical-align:middle;margin-right:.4em}
