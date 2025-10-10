@@ -96,7 +96,6 @@ document.addEventListener('DOMContentLoaded', () => {
   function createRenderer(){
     const renderer = new marked.Renderer();
     renderer.heading = (a,b,c) => {
-      // 新API: 引数が token オブジェクト
       if (a && typeof a === 'object' && ('text' in a || 'tokens' in a || 'raw' in a || 'depth' in a)) {
         const token = a;
         const depth = token.depth || token.level || b || 1;
@@ -105,7 +104,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const id = slugify(raw || text);
         return `<h${depth} id="${id}">${escHtml(text)}</h${depth}>\n`;
       }
-      // 旧API: (text, level, raw)
       const text = a, level = b || 1, raw = c || a;
       const id = slugify(raw || text);
       return `<h${level} id="${id}">${escHtml(text)}</h${level}>\n`;
@@ -122,6 +120,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return `${safe}.txt`;
   }
   function memoHtmlFilename() { return memoTxtFilename().replace(/\.txt$/i, '.html'); }
+  function memoPdfFilename()  { return memoTxtFilename().replace(/\.txt$/i, '.pdf'); }
   function memoTitle() {
     const text = (memoArea && memoArea.value) || '';
     const m = text.match(/^ {0,3}#\s*(.+?)\s*#*\s*$/m);
@@ -145,6 +144,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const saveMemoBtn=document.getElementById('saveMemo');
   const clearMemoBtn=document.getElementById('clearMemo');
   const exportHtmlBtn=document.getElementById('exportHtml'); // （HTML側に無ければ無視）
+  const exportPdfBtn = document.getElementById('exportPdf'); // （HTML側に無ければ無視）
   const tocList=document.getElementById('tocList');
 
   if(memoArea) memoArea.value = lsGet(memoKey, '');
@@ -178,6 +178,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const fallbackHtml = (() => {
       let t = escHtml(md);
+      // ← 既存の <font color> を許可（エスケープ戻し）
+      t = t.replace(/&lt;font(\s+[^&]*)&gt;/g, '<font$1>')
+           .replace(/&lt;\/font&gt;/g, '</font>');
       t = t
         .replace(/^ {0,3}######\s+(.*?)\s*#*\s*$/gm, '<h6>$1</h6>')
         .replace(/^ {0,3}#####\s+(.*?)\s*#*\s*$/gm,  '<h5>$1</h5>')
@@ -234,16 +237,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!memoArea) return;
     const val = memoArea.value;
     let savedWhere = [];
-
     try { if (lsSet(memoKey, val)) savedWhere.push('localStorage'); } catch{}
-
     if (!savedWhere.length) {
       try { await idbInit(); if (await idbSet(memoKey, val)) savedWhere.push('IndexedDB'); } catch{}
     }
-
     const name = memoTxtFilename();
     const dlOK = downloadTxt(val, name);
-
     const okParts = [...savedWhere, dlOK ? 'DL' : null].filter(Boolean);
     saveMemoBtn.textContent = okParts.length ? `保存OK：${okParts.join(' + ')}` : '保存失敗';
     setTimeout(()=> saveMemoBtn.textContent = '保存', 1600);
@@ -269,6 +268,132 @@ document.addEventListener('DOMContentLoaded', () => {
   buildTOC((memoArea && normalizeMd(memoArea.value))||'');
 
   /* ===== ワンクリック挿入ツールバー ===== */
+
+  // ---- 色ユーティリティ（選択範囲に color 適用/解除） ----
+  function applyColorToSelection(hex){
+    const ta=memoArea; if(!ta) return;
+    const {selectionStart:s, selectionEnd:e}=ta;
+    const before=ta.value.slice(0,s);
+    const selected=ta.value.slice(s,e) || 'テキスト';
+    const after=ta.value.slice(e);
+    ta.value = `${before}<font color="${hex}">${selected}</font>${after}`;
+    const pos = (before+`<font color="${hex}">${selected}</font>`).length;
+    ta.focus(); ta.setSelectionRange(pos,pos);
+    ta.dispatchEvent(new Event('input'));
+  }
+
+  function removeColorFromSelection(){
+    const ta=memoArea; if(!ta) return;
+    let {selectionStart:s, selectionEnd:e}=ta;
+    let v=ta.value;
+
+    if (s < e) {
+      const selected = v.slice(s,e);
+      const stripped = selected.replace(/<\/?font\b[^>]*>/gi, '');
+      ta.value = v.slice(0,s) + stripped + v.slice(e);
+      const pos = s + stripped.length;
+      ta.focus(); ta.setSelectionRange(pos,pos);
+      ta.dispatchEvent(new Event('input'));
+      return;
+    }
+
+    // 選択が空の場合：カーソルが <font>…</font> 内ならそのタグだけ除去
+    const openIdx = v.lastIndexOf('<font', s);
+    const closeIdx = v.indexOf('</font>', s);
+    if (openIdx !== -1 && closeIdx !== -1) {
+      const openEnd = v.indexOf('>', openIdx);
+      if (openEnd !== -1 && openEnd < s && closeIdx >= s) {
+        const inner = v.slice(openEnd+1, closeIdx);
+        ta.value = v.slice(0, openIdx) + inner + v.slice(closeIdx + 7);
+        const pos = openIdx + inner.length;
+        ta.focus(); ta.setSelectionRange(pos,pos);
+        ta.dispatchEvent(new Event('input'));
+        return;
+      }
+    }
+    // 何もできなければ無視
+  }
+
+  // ---- 色パレットのポップオーバー ----
+  let colorPopover = null;
+  const PALETTE = [
+    '#ef4444', // red
+    '#f59e0b', // amber
+    '#10b981', // green
+    '#3b82f6', // blue
+    '#8b5cf6', // violet
+    '#ec4899', // pink
+    '#111827', // gray-900
+    '#000000', // black
+    '#ffffff'  // white
+  ];
+
+  function closeColorPopover(){ if(colorPopover){ colorPopover.remove(); colorPopover=null; document.removeEventListener('click', outsideClose, true); } }
+  function outsideClose(e){
+    if(colorPopover && !colorPopover.contains(e.target)) closeColorPopover();
+  }
+
+  function showColorPopover(anchorBtn){
+    closeColorPopover();
+    const rect = anchorBtn.getBoundingClientRect();
+    const pop = document.createElement('div');
+    pop.className = 'color-popover';
+    Object.assign(pop.style, {
+      position:'fixed', left: `${Math.round(rect.left)}px`, top: `${Math.round(rect.bottom + 6)}px`,
+      background:'rgba(17,17,17,.9)', color:'#fff', border:'1px solid rgba(255,255,255,.15)',
+      padding:'8px', borderRadius:'10px', backdropFilter:'blur(10px)', WebkitBackdropFilter:'blur(10px)',
+      boxShadow:'0 10px 30px rgba(0,0,0,.25)', zIndex: 9999, display:'flex', alignItems:'center', gap:'6px'
+    });
+
+    // スウォッチ
+    PALETTE.forEach(hex=>{
+      const b = document.createElement('button');
+      Object.assign(b.style, {
+        width:'22px', height:'22px', borderRadius:'6px', border:'1px solid rgba(255,255,255,.25)',
+        cursor:'pointer', background: hex, outline:'none'
+      });
+      b.title = hex;
+      b.onclick = (e)=>{ e.preventDefault(); applyColorToSelection(hex); closeColorPopover(); };
+      pop.appendChild(b);
+    });
+
+    // カスタム
+    const custom = document.createElement('button');
+    custom.textContent = '…';
+    Object.assign(custom.style, {
+      width:'28px', height:'22px', borderRadius:'6px', border:'1px solid rgba(255,255,255,.25)',
+      background:'transparent', color:'#fff', cursor:'pointer'
+    });
+    custom.onclick = (e)=>{
+      e.preventDefault();
+      const input = document.createElement('input');
+      input.type='color'; input.value='#ff4d4f'; input.style.position='fixed'; input.style.left='-9999px';
+      document.body.appendChild(input);
+      input.addEventListener('input', ()=>{
+        applyColorToSelection(input.value || '#000000'); closeColorPopover();
+        setTimeout(()=> input.remove(), 0);
+      }, {once:true});
+      input.click();
+    };
+    pop.appendChild(custom);
+
+    // 解除
+    const clear = document.createElement('button');
+    clear.textContent = '×';
+    Object.assign(clear.style, {
+      width:'28px', height:'22px', borderRadius:'6px', border:'1px solid rgba(255,255,255,.25)',
+      background:'transparent', color:'#fff', cursor:'pointer', fontWeight:'bold'
+    });
+    clear.title = '色を解除';
+    clear.onclick = (e)=>{ e.preventDefault(); removeColorFromSelection(); closeColorPopover(); };
+    pop.appendChild(clear);
+
+    document.body.appendChild(pop);
+    colorPopover = pop;
+    setTimeout(()=> document.addEventListener('click', outsideClose, true), 0);
+  }
+
+  // ---- Markdown挿入ツール群 ----
   const TB = {
     wrap(selPrefix, selSuffix, placeholder=''){
       const ta=memoArea; if(!ta) return;
@@ -332,22 +457,32 @@ document.addEventListener('DOMContentLoaded', () => {
       ta.value = v.slice(0,s) + '\n\n---\n\n' + v.slice(s);
       const pos = s + 5; ta.focus(); ta.setSelectionRange(pos,pos); ta.dispatchEvent(new Event('input'));
     },
-    fence(){ TB.wrap('\n```txt\n','\n```\n','ここにコード'); }
+    fence(){ TB.wrap('\n```txt\n','\n```\n','ここにコード'); },
+
+    // 追加：色パレット（1クリック挿入）と解除
+    color(btn){ showColorPopover(btn); },
+    uncolor(){ removeColorFromSelection(); } // （必要なら別ボタンに割り当て可能）
   };
+
+  // ツールバークリック
   const toolbarLeft = document.querySelector('.toolbar-left');
   if (toolbarLeft) toolbarLeft.addEventListener('click', (e)=>{
     const btn = e.target.closest('button'); if(!btn) return;
     const act = btn.dataset.act; const lvl = parseInt(btn.dataset.level||'0',10);
     if(!act) return;
     if(act==='heading') TB.heading(lvl);
+    else if(act==='color') TB.color(btn);
     else TB[act] && TB[act]();
   });
 
-  /* ===== Markdown → HTML 変換 & HTML書き出し ===== */
+  /* ===== Markdown → HTML 変換 & HTML/ PDF 書き出し ===== */
   function markdownToHtmlBody(md) {
     const text = normalizeMd(md);
     const fallback = (() => {
       let t = escHtml(text);
+      // <font> を許可
+      t = t.replace(/&lt;font(\s+[^&]*)&gt;/g, '<font$1>')
+           .replace(/&lt;\/font&gt;/g, '</font>');
       t = t
         .replace(/^ {0,3}######\s+(.*?)\s*#*\s*$/gm, '<h6>$1</h6>')
         .replace(/^ {0,3}#####\s+(.*?)\s*#*\s*$/gm,  '<h5>$1</h5>')
@@ -409,6 +544,54 @@ document.addEventListener('DOMContentLoaded', () => {
     const ok = download(doc, name);
     exportHtmlBtn.textContent = ok ? 'HTML保存済' : 'HTML保存失敗';
     setTimeout(()=> exportHtmlBtn.textContent = 'HTML保存', 1400);
+  };
+
+  if (exportPdfBtn) exportPdfBtn.onclick = async () => {
+    if (!memoArea) return;
+    const md = memoArea.value;
+    const htmlBody = markdownToHtmlBody(md);
+    const css = `
+      body{margin:24px auto;max-width:800px;padding:0 16px;line-height:1.75;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,'Apple Color Emoji','Segoe UI Emoji';color:#111;}
+      h1,h2,h3,h4,h5,h6{line-height:1.3;margin:1.6em 0 .6em}
+      h1{font-size:2rem} h2{font-size:1.6rem} h3{font-size:1.3rem}
+      pre{padding:12px;background:#f5f5f5;overflow:auto;border-radius:8px}
+      code{background:#f5f5f5;padding:.2em .35em;border-radius:4px}
+      blockquote{margin:1em 0;padding:.5em 1em;border-left:4px solid #ddd;color:#555;background:#fafafa}
+      ul,ol{padding-left:1.4em}
+      a{color:#2563eb;text-decoration:none} a:hover{text-decoration:underline}
+      hr{border:none;border-top:1px solid #e5e5e5;margin:2em 0}
+      img{max-width:100%;height:auto}
+      table{border-collapse:collapse} td,th{border:1px solid #e5e5e5;padding:.4em .6em}
+    `.trim();
+
+    const tmp = document.createElement('div');
+    tmp.style.position='fixed'; tmp.style.left='-9999px';
+    tmp.innerHTML = `<style>${css}</style>` + htmlBody;
+    document.body.appendChild(tmp);
+
+    const filename = memoPdfFilename();
+
+    try{
+      if (window.html2pdf) {
+        await html2pdf().set({
+          margin: 10,
+          filename,
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: { scale: 2, useCORS: true },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        }).from(tmp).save();
+        exportPdfBtn.textContent = 'PDF保存済';
+      } else {
+        alert('PDFライブラリが読み込まれていません。ネットワークやdefer属性を確認してください。');
+        exportPdfBtn.textContent = 'PDF保存失敗';
+      }
+    }catch(e){
+      console.error(e);
+      exportPdfBtn.textContent = 'PDF保存失敗';
+    }finally{
+      setTimeout(()=> exportPdfBtn.textContent = 'PDF保存', 1400);
+      tmp.remove();
+    }
   };
 
   /* ===== ToDo ===== */
@@ -644,6 +827,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // 初期化確認ログ
   console.log('[init] app.js loaded, buttons:', {
     save: !!document.getElementById('saveMemo'),
-    exportHtml: !!document.getElementById('exportHtml')
+    exportHtml: !!document.getElementById('exportHtml'),
+    exportPdf: !!document.getElementById('exportPdf')
   });
 });
