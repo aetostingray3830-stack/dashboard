@@ -120,12 +120,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ========== インラインMarkdown（見出し内などで使う軽量処理） ==========
   function inlineMdToHtml(s){
-    return String(s ?? '')
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-      .replace(/~~([^~]+)~~/g, '<del>$1</del>');
-  }
+  return String(s ?? '')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+   .replace(/__([^_]+)__/g, '<strong>$1</strong>')   // __強調__
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+   .replace(/_([^_]+)_/g, '<em>$1</em>')             // _斜体_
+    .replace(/~~([^~]+)~~/g, '<del>$1</del>');
+}
+
 
   // ========== 見出し先行HTML化（id付与、見出し内の装飾OK） ==========
   function preprocessHeadings(md){
@@ -612,7 +615,9 @@ document.addEventListener('DOMContentLoaded', () => {
   function markdownToHtmlBody(md) {
     const text0 = normalizeMd(md);
     const text1 = encodeColorMarkers(text0);
-    const textPre = preprocessHeadings(text1);
+     let textPre = preprocessHeadings(text1);
+ // hタグの直後に空行が無いケースを強制分離
+ textPre = textPre.replace(/(<\/h[1-6]>)(?!\n\n)/g, '$1\n\n');
 
     let out;
     if (typeof window.marked !== 'undefined' && marked?.parse) {
