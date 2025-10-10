@@ -218,21 +218,8 @@ document.addEventListener('DOMContentLoaded', () => {
     html = marked.parse(mdPre);
   } else {
     // フォールバック（最低限のインライン装飾＋引用・箇条書き）
-    let t = mdPre
-      // 引用
-      .replace(/^> (.*)$/gm, '<blockquote>$1</blockquote>')
-      // 行内コード → 太字 → 斜体 → 取り消し（順序が大事）
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-      .replace(/~~([^~]+)~~/g, '<del>$1</del>')
-      // 箇条書き
-      .replace(/^\s*-\s+(.*)$/gm, '<li>$1</li>')
-      .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>')
-      // 段落
-      .replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
-    html = `<p>${t}</p>`;
-  }
+    // 新：ブロック単位のパーサ
+    html = fallbackMarkdownToHtml(mdPre);
 
   // 4) 色マーカーを <span style="color:…"> に復元（ここで色が付く）
   html = decodeColorMarkersToHtml(html);
@@ -523,16 +510,7 @@ document.addEventListener('DOMContentLoaded', () => {
     marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
     out = marked.parse(textPre);
   } else {
-    let t = textPre
-      .replace(/^> (.*)$/gm, '<blockquote>$1</blockquote>')
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-      .replace(/~~([^~]+)~~/g, '<del>$1</del>')
-      .replace(/^\s*-\s+(.*)$/gm, '<li>$1</li>')
-      .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>')
-      .replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
-    out = `<p>${t}</p>`;
+    out = fallbackMarkdownToHtml(textPre);
   }
   return decodeColorMarkersToHtml(out);
 }
@@ -901,6 +879,56 @@ document.addEventListener('DOMContentLoaded', () => {
   const supportsBackdrop = CSS.supports('backdrop-filter','blur(10px)') || CSS.supports('-webkit-backdrop-filter','blur(10px)');
   if(!supportsBackdrop){ document.querySelectorAll('.glass').forEach(el=> el.style.background='rgba(255,255,255,.9)'); }
 
+// フォールバック用：ブロックごとに段落化（見出し/箇条書き/引用は尊重）
+function fallbackMarkdownToHtml(mdPre){
+  const blocks = String(mdPre ?? '').split(/\n{2,}/); // 空行でブロック区切り
+  const out = [];
+
+  const inline = (s) => s
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/~~([^~]+)~~/g, '<del>$1</del>');
+
+  for (const raw of blocks) {
+    const b = raw.replace(/\s+$/,''); // 末尾空白除去
+    if (!b.trim()) continue;
+
+    // 既に見出しHTML（preprocessHeadings済み）
+    if (/^<h[1-6]\b/i.test(b.trim())) {
+      out.push(b.trim());
+      continue;
+    }
+
+    // 箇条書き（ブロック内の全行が "- " 始まりなら <ul>）
+    const lines = b.split('\n');
+    if (lines.every(l => /^\s*-\s+/.test(l))) {
+      const items = lines.map(l => {
+        const m = l.match(/^\s*-\s+(.*)$/);
+        return `<li>${inline(m ? m[1] : l)}</li>`;
+      }).join('');
+      out.push(`<ul>${items}</ul>`);
+      continue;
+    }
+
+    // 引用（全行が "> " 始まりなら <blockquote> の中で段落化）
+    if (lines.every(l => /^\s*>\s+/.test(l))) {
+      const q = lines.map(l => {
+        const m = l.match(/^\s*>\s+(.*)$/);
+        return inline(m ? m[1] : l);
+      }).join('<br>');
+      out.push(`<blockquote>${q}</blockquote>`);
+      continue;
+    }
+
+    // それ以外は通常段落（単一改行は <br>）
+    out.push(`<p>${inline(b).replace(/\n/g, '<br>')}</p>`);
+  }
+
+  return out.join('\n');
+}
+
+  
   // 初期化確認ログ
   console.log('[init] app.js loaded, buttons:', {
     save: !!document.getElementById('saveMemo'),
