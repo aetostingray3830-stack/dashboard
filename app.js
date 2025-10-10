@@ -613,17 +613,7 @@ if (exportPdfBtn) exportPdfBtn.onclick = async () => {
   const htmlBody = markdownToHtmlBody(md);              // 本文
   const docHtml  = buildStandaloneHtml(memoTitle(), htmlBody); // CSS込みの完全HTML
 
-  // 2) DOMParserで <body> と <style> を取り出して、非表示ホストに組み立てる
-  const parsed = new DOMParser().parseFromString(docHtml, 'text/html');
 
-  const host = document.createElement('div');
-  Object.assign(host.style, {
-    position: 'fixed',
-    left: '-9999px',
-    top: '-9999px',
-    width: '794px',   // A4縦のプリンタ解像度基準に寄せたい場合はこの幅を調整
-    maxWidth: '794px'
-  });
 
   // head内の <style> を取り込む（@font-face や本文スタイルもPDF側に反映）
   parsed.head.querySelectorAll('style').forEach(st => {
