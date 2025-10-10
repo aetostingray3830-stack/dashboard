@@ -122,6 +122,25 @@ document.addEventListener('DOMContentLoaded', () => {
       .replace(/⟦\/C⟧/g, '');
   }
 
+
+  // 見出しマーカー → <hN id="...">…</hN>
+// 角括弧 ⟦H:..⟧ と、スクエア [H:..] の両対応
+function postprocessHeadingMarkers(html) {
+  let s = String(html ?? '');
+
+  // ⟦H:level:id⟧...⟦/H⟧
+  s = s.replace(/⟦H:(\d):([^\u27E7\]]+)⟧([\s\S]*?)⟦\/H⟧/g,
+    (_, lvl, id, inner) => `<h${lvl} id="${id}">${inner}</h${lvl}>`
+  );
+
+  // [H:level:id]...[/H]
+  s = s.replace(/\[H:(\d):([^\]]+)\]([\s\S]*?)\[\/H\]/g,
+    (_, lvl, id, inner) => `<h${lvl} id="${id}">${inner}</h${lvl}>`
+  );
+
+  return s;
+}
+
   // ========== インラインMarkdown（見出し内などで使う軽量処理） ==========
   function inlineMdToHtml(s){
   return String(s ?? '')
@@ -325,30 +344,24 @@ document.addEventListener('DOMContentLoaded', () => {
     if(!memoArea || !memoPreview) return;
 
     // 1) 正規化 → <font> を一旦マーカー化
-    const md0 = normalizeMd(memoArea.value || '');
-    const md1 = encodeColorMarkers(md0);
+    const md0  = normalizeMd(memoArea.value || '');
+const md1  = encodeColorMarkers(md0);
+const mdPre= preprocessHeadings(md1);       // ← [H:..] などに置換
 
-    // 2) 見出しだけ先に HTML 化（見出し内 **/*/~~/` を有効）
-    const mdPre = preprocessHeadings(md1);
+let html;
+if (typeof window.marked !== 'undefined' && marked?.parse) {
+  marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
+  html = marked.parse(mdPre);               // ← ここではまだ [H:..] のまま
+} else {
+  html = fallbackMarkdownToHtml(mdPre);
+}
 
-    // 3) Markdown → HTML
-    let html;
-    if (typeof window.marked !== 'undefined' && marked?.parse) {
-      marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
-      html = marked.parse(mdPre);
-    } else {
-      html = fallbackMarkdownToHtml(mdPre);
-    }
+html = postprocessHeadingMarkers(html);     // ★ まず見出しを <hN> に戻す
+html = decodeColorMarkersToHtml(html);      // ★ その後 色マーカーを <span style> に
+memoPreview.innerHTML = html;
 
-    // 4) 色マーカーを復元
-    html = decodeColorMarkersToHtml(html);
+buildTOC(md0);
 
-    // 4.5) タスクリスト正規化
-    html = normalizeTaskListHtml(html);
-
-    // 5) 反映＆TOC
-    memoPreview.innerHTML = html;
-    buildTOC(md0);
   }
 
   function showEdit(){
@@ -624,20 +637,16 @@ document.addEventListener('DOMContentLoaded', () => {
   /* ===== Markdown → HTML 変換 & HTML/ PDF 書き出し ===== */
   function markdownToHtmlBody(md) {
     const text0 = normalizeMd(md);
-    const text1 = encodeColorMarkers(text0);
-     let textPre = preprocessHeadings(text1);
- // hタグの直後に空行が無いケースを強制分離
- textPre = textPre.replace(/(<\/h[1-6]>)(?!\n\n)/g, '$1\n\n');
+const text1 = encodeColorMarkers(text0);
+const textPre = preprocessHeadings(text1);
 
-    let out;
-    if (typeof window.marked !== 'undefined' && marked?.parse) {
-      marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
-      out = marked.parse(textPre);
-    } else {
-      out = fallbackMarkdownToHtml(textPre);
-    }
-    out = decodeColorMarkersToHtml(out);
-    return normalizeTaskListHtml(out);
+let out = (window.marked?.parse)
+  ? (marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false }), marked.parse(textPre))
+  : fallbackMarkdownToHtml(textPre);
+
+out = postprocessHeadingMarkers(out);
+return decodeColorMarkersToHtml(out);
+
   }
 
   function buildStandaloneHtml(title, innerHtml) {
