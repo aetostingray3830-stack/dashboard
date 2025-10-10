@@ -13,7 +13,28 @@ window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
 
 /* ========= アプリ初期化 ========= */
 document.addEventListener('DOMContentLoaded', () => {
-  /* === 時計 === */
+  /* ===== localStorage セーフラッパー ===== */
+  const lsOK = (()=>{ try{ const k='__probe__'; localStorage.setItem(k,'1'); localStorage.removeItem(k); return true; }catch(_){ return false; }})();
+  const lsGet = (k, def='') => { try{ const v = localStorage.getItem(k); return v===null? def : v; }catch(e){ console.warn('lsGet fail', e); return def; } };
+  const lsSet = (k, v) => { try{ localStorage.setItem(k, v); return true; }catch(e){ console.warn('lsSet fail', e); return false; } };
+  const download = (text, filename='backup.txt') => {
+    const blob = new Blob([text], {type:'text/plain'}); const a=document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 0);
+  };
+  if(!lsOK){
+    console.warn('localStorage not available. Saving will fall back to file download.');
+    const note=document.createElement('div');
+    note.textContent='⚠ ブラウザが保存をブロック中。保存するとバックアップをダウンロードします。';
+    note.style.cssText='position:fixed;left:16px;bottom:16px;background:#000a;color:#fff;padding:8px 10px;border-radius:8px;font-size:12px;z-index:2000';
+    document.body.appendChild(note); setTimeout(()=>note.remove(), 6000);
+  }
+
+  const toStr = (v) => (typeof v === 'string' ? v : (v == null ? '' : String(v)));
+  const slugify = (str)=> toStr(str).toLowerCase().trim()
+    .replace(/[^\w\- \u3000-\u9fff]/g,'').replace(/\s+/g,'-').replace(/-+/g,'-');
+
+  /* ===== 時計 ===== */
   const clockEl=document.getElementById('clock');
   function tick(){
     const d=new Date();
@@ -21,7 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   tick(); setInterval(tick,1000);
 
-  /* === メモ（Markdown + TOC + Toolbar） === */
+  /* ===== メモ（Markdown + TOC + Toolbar） ===== */
   const memoKey='glass_memo_v1';
   const memoArea=document.getElementById('memoArea');
   const memoPreview=document.getElementById('memoPreview');
@@ -31,11 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const clearMemoBtn=document.getElementById('clearMemo');
   const tocList=document.getElementById('tocList');
 
-  if(memoArea) memoArea.value = localStorage.getItem(memoKey) || '';
-
-  const toStr = (v) => (typeof v === 'string' ? v : (v == null ? '' : String(v)));
-  const slugify = (str)=> toStr(str).toLowerCase().trim()
-    .replace(/[^\w\- \u3000-\u9fff]/g,'').replace(/\s+/g,'-').replace(/-+/g,'-');
+  if(memoArea) memoArea.value = lsGet(memoKey, '');
 
   function buildTOC(md){
     if(!tocList) return;
@@ -57,6 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderPreview(){
     if(!memoArea || !memoPreview) return;
 
+    // フォールバックHTML（簡易Markdown）
     const fallbackHtml = (() => {
       const esc = (s)=>toStr(s).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
       let t = esc(memoArea.value || '');
@@ -75,16 +93,17 @@ document.addEventListener('DOMContentLoaded', () => {
       return `<p>${t}</p>`;
     })();
 
+    // marked が使える場合のみ使う（内部ID生成を完全停止）
     let html = fallbackHtml;
     try {
       if (typeof window.marked !== 'undefined') {
-        marked.setOptions({ mangle:false, headerIds:false }); // ← 内部のID生成を停止
-  const renderer = new marked.Renderer();
-  renderer.heading = (text, level, raw) => {
-    const id = slugify(raw || text);             // ← こちらでIDを付与
-    return `<h${level} id="${id}">${toStr(text)}</h${level}>\n`;
-  };
-        html = marked.parse(toStr(memoArea.value || ''), { renderer }); // 自前IDのみ使用
+        marked.setOptions({ mangle:false, headerIds:false }); // ← 内部 slugger を止める
+        const renderer = new marked.Renderer();
+        renderer.heading = (text, level, raw) => {
+          const id = slugify(raw || text);
+          return `<h${level} id="${id}">${toStr(text)}</h${level}>\n`;
+        };
+        html = marked.parse(toStr(memoArea.value || ''), { renderer });
       }
     } catch (e) {
       console.error('marked parse failed, fallback used:', e);
@@ -114,15 +133,26 @@ document.addEventListener('DOMContentLoaded', () => {
   if(editBtn)    editBtn.onclick    = showEdit;
   if(previewBtn) previewBtn.onclick = showPreview;
 
-  if(saveMemoBtn) saveMemoBtn.onclick=()=>{ if(!memoArea) return; localStorage.setItem(memoKey, memoArea.value); saveMemoBtn.textContent='保存済'; setTimeout(()=>saveMemoBtn.textContent='保存',800); };
-  if(clearMemoBtn) clearMemoBtn.onclick=()=>{ if(!memoArea) return; if(confirm('メモを消去しますか？')){ memoArea.value=''; localStorage.removeItem(memoKey); renderPreview(); showEdit(); } };
-  if(memoArea) setInterval(()=> localStorage.setItem(memoKey, memoArea.value), 10000);
+  if(saveMemoBtn) saveMemoBtn.onclick = () => {
+    if(!memoArea) return;
+    const ok = lsSet(memoKey, memoArea.value);
+    if(ok){
+      saveMemoBtn.textContent='保存済';
+    }else{
+      saveMemoBtn.textContent='保存失敗…バックアップDL';
+      download(memoArea.value, 'memo-backup.txt');
+      alert('保存がブロックされました。テキストをダウンロードで退避しました。');
+    }
+    setTimeout(()=>saveMemoBtn.textContent='保存', 1200);
+  };
+  if(clearMemoBtn) clearMemoBtn.onclick=()=>{ if(!memoArea) return; if(confirm('メモを消去しますか？')){ memoArea.value=''; lsSet(memoKey,''); renderPreview(); showEdit(); } };
+  if(memoArea) setInterval(()=> { lsSet(memoKey, memoArea.value); }, 10000);
 
   let tocTimer=null;
   if(memoArea) memoArea.addEventListener('input', ()=>{ if(tocTimer) clearTimeout(tocTimer); tocTimer=setTimeout(()=>buildTOC(memoArea.value||''), 250); });
   buildTOC((memoArea && memoArea.value)||'');
 
-  // ツールバー
+  // ツールバー（ワンクリック挿入）
   const TB = {
     wrap(selPrefix, selSuffix, placeholder=''){
       const ta=memoArea; if(!ta) return;
@@ -197,13 +227,13 @@ document.addEventListener('DOMContentLoaded', () => {
     else TB[act] && TB[act]();
   });
 
-  /* === ToDo === */
+  /* ===== ToDo ===== */
   const todoKey='glass_todos_v1';
   const todoInput=document.getElementById('todoInput');
   const todoList=document.getElementById('todoList');
   const clearTodos=document.getElementById('clearTodos');
-  const loadTodos=()=>{try{ return JSON.parse(localStorage.getItem(todoKey)||'[]'); }catch{ return [] }};
-  const saveTodos=(t)=> localStorage.setItem(todoKey, JSON.stringify(t));
+  const loadTodos=()=>{ try{ return JSON.parse(lsGet(todoKey,'[]')); }catch{ return []; } };
+  const saveTodos=(t)=> lsSet(todoKey, JSON.stringify(t));
   function renderTodos(){
     if(!todoList) return;
     const list=loadTodos(); todoList.innerHTML='';
@@ -226,9 +256,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const l=loadTodos(); l.push({text:v,done:false}); saveTodos(l);
     todoInput.value=''; renderTodos();
   });
-  if(clearTodos) clearTodos.onclick=()=>{ if(confirm('ToDoを全て消しますか？')){ localStorage.removeItem(todoKey); renderTodos(); } };
+  if(clearTodos) clearTodos.onclick=()=>{ if(confirm('ToDoを全て消しますか？')){ lsSet(todoKey,'[]'); renderTodos(); } };
 
-  /* === YouTube 入力 === */
+  /* ===== YouTube 入力 ===== */
   const playlistInput=document.getElementById('playlistInput');
   if(playlistInput) playlistInput.addEventListener('keydown', e=>{
     if(e.key!=='Enter') return;
@@ -245,7 +275,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if(prevBtn) prevBtn.onclick=()=> player?.previousVideo?.();
   if(nextBtn) nextBtn.onclick=()=> player?.nextVideo?.();
 
-  /* === タイマー === */
+  /* ===== タイマー ===== */
   const tKey='glass_timer_settings_v1';
   const modeSelect=document.getElementById('modeSelect');
   const workLen=document.getElementById('workLen');
@@ -261,7 +291,7 @@ document.addEventListener('DOMContentLoaded', () => {
     g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.6);o.start();o.stop(c.currentTime+.62);}catch{}};
 
   let state={mode:'pomodoro',work:25,rest:5,phase:'work',left:25*60,running:false,last:0};
-  try{ state=Object.assign(state, JSON.parse(localStorage.getItem(tKey)||'{}')); }catch{}
+  try{ state=Object.assign(state, JSON.parse(lsGet(tKey,'{}'))); }catch{}
 
   function syncTimerUI(){
     if (timerDisplay) {
@@ -272,7 +302,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (phaseLabel) {
       phaseLabel.textContent = state.mode==='plain' ? 'タイマー' : (state.phase==='work'?'作業':'休憩');
     }
-    localStorage.setItem(tKey, JSON.stringify(state));
+    lsSet(tKey, JSON.stringify(state));
   }
   syncTimerUI();
 
@@ -302,7 +332,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if(workLen) workLen.onchange=()=>{ state.work=Math.max(1,parseInt(workLen.value||'25')); if(state.phase==='work'||state.mode==='plain'){ state.left=state.work*60;} syncTimerUI(); };
   if(breakLen) breakLen.onchange=()=>{ state.rest=Math.max(1,parseInt(breakLen.value||'5')); if(state.phase==='rest'&&state.mode==='pomodoro'){ state.left=state.rest*60;} syncTimerUI(); };
 
-  /* === 執筆進捗 === */
+  /* ===== 執筆進捗 ===== */
   const pKey='glass_progress_v1';
   const goalInput=document.getElementById('goalInput');
   const currentInput=document.getElementById('currentInput');
@@ -312,7 +342,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const remainText=document.getElementById('remainText');
   const saveProgressBtn=document.getElementById('saveProgress');
   let prog={goal:1000,current:0,auto:true};
-  try{ prog=Object.assign(prog, JSON.parse(localStorage.getItem(pKey)||'{}')); }catch{}
+  try{ prog=Object.assign(prog, JSON.parse(lsGet(pKey,'{}')) ); }catch{}
   if(goalInput) goalInput.value=prog.goal;
   if(currentInput) currentInput.value=prog.current;
   if(autoCount) autoCount.checked=!!prog.auto;
@@ -332,15 +362,22 @@ document.addEventListener('DOMContentLoaded', () => {
     prog.goal=Math.max(0,parseInt((goalInput && goalInput.value)||'0'));
     prog.current=Math.max(0,parseInt((currentInput && currentInput.value)||'0'));
     prog.auto=!!(autoCount && autoCount.checked);
-    localStorage.setItem(pKey, JSON.stringify(prog));
+    const ok = lsSet(pKey, JSON.stringify(prog));
     updateProgress();
-    if(saveProgressBtn){ saveProgressBtn.textContent='保存済'; setTimeout(()=>saveProgressBtn.textContent='保存',800); }
+    if(saveProgressBtn){
+      saveProgressBtn.textContent = ok ? '保存済' : '保存失敗…バックアップDL';
+      if(!ok){
+        download(JSON.stringify(prog,null,2), 'progress-backup.json');
+        alert('進捗の保存に失敗しました。JSONをダウンロードで退避しました。');
+      }
+      setTimeout(()=>saveProgressBtn.textContent='保存', 1200);
+    }
   }
   if(saveProgressBtn) saveProgressBtn.onclick=saveProgress;
   [goalInput,currentInput,autoCount].forEach(el=> el && el.addEventListener('change', saveProgress));
   if(memoArea) memoArea.addEventListener('input', ()=>{ if(autoCount && autoCount.checked) updateProgress(); });
 
-  /* === 背景 & 白文字設定 + 設定パネル === */
+  /* ===== 背景 & 白文字設定 + 設定パネル ===== */
   const openBtn=document.getElementById('openSettings');
   const panel=document.getElementById('settingsPanel');
   const bgControls=document.getElementById('bgControls');
@@ -359,8 +396,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.body.classList.toggle('white-text', !!s.whiteText);
     if(toggleWhiteText) toggleWhiteText.textContent = s.whiteText ? '文字色を通常に戻す' : '文字色を白にする';
   };
-  const saveSettings=(s)=> localStorage.setItem(settingsKey, JSON.stringify(s));
-  const loadSettings=()=>{ try{return JSON.parse(localStorage.getItem(settingsKey)||'{}')}catch{return{}} };
+  const saveSettings=(s)=> lsSet(settingsKey, JSON.stringify(s));
+  const loadSettings=()=>{ try{return JSON.parse(lsGet(settingsKey,'{}'))}catch{return{}} };
 
   function drawBgControls(s){
     if(!bgControls) return;
@@ -402,7 +439,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('keydown', (e)=>{ if((e.ctrlKey||e.metaKey) && e.key === '.'){ panel.classList.toggle('active'); } });
   }
 
-  /* === Backdrop フォールバック === */
+  /* ===== Backdrop フォールバック ===== */
   const supportsBackdrop = CSS.supports('backdrop-filter','blur(10px)') || CSS.supports('-webkit-backdrop-filter','blur(10px)');
   if(!supportsBackdrop){ document.querySelectorAll('.glass').forEach(el=> el.style.background='rgba(255,255,255,.9)'); }
 });
