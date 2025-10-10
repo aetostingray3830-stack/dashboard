@@ -91,8 +91,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Markdown正規化（全角＃→半角、CRLF→LF）
   function normalizeMd(md){
-    return toStr(md).replace(/＃/g, '#').replace(/\r\n?/g, '\n');
-  }
+  return String(md ?? '')
+    .replace(/^\uFEFF/, '')     // ← 先頭BOM除去
+    .replace(/＃/g, '#')
+    .replace(/\r\n?/g, '\n');   // ← CRLF→LF
+}
+
 
   // ========== 色タグ：マーカー化 / 復元 / 剥がし ==========
   // ⟦C:#hex⟧...⟦/C⟧ に一旦変換（Markdownを中で解釈させるため）
@@ -133,7 +137,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ========== 見出し先行HTML化（id付与、見出し内の装飾OK） ==========
   function preprocessHeadings(md){
   const src = String(md ?? '');
-  return src.replace(
+  const withMarkers = src.replace(
     /^ {0,3}(#{1,6})\s+([\s\S]*?)\s*#*\s*$/gm,
     (m, hashes, innerMd) => {
       const level = hashes.length;
@@ -142,12 +146,18 @@ document.addEventListener('DOMContentLoaded', () => {
         .replace(/⟦\/C⟧/g,'')
         .replace(/<[^>]*>/g,'');
       const id = slugify(plain);
-      const innerHtml = inlineMdToHtml(innerMd);
-      // ← ここだけ変更：見出しの“後ろ”に空行を入れる
-      return `<h${level} id="${id}">${innerHtml}</h${level}>\n\n`;
+      const innerHtml = inlineMdToHtml(innerMd); // 見出し内の ** 等はここでOK
+      return `⟦H:${level}:${id}⟧${innerHtml}⟦/H⟧`;
     }
   );
+  // ← 見出しマーカーの直後に“必ず”空行2つを作る
+  return withMarkers
+    // 「すぐ次がテキスト」の場合は \n\n を強制
+    .replace(/⟦\/H⟧(?!\n\n)/g, '⟦/H⟧\n\n')
+    // 万一 \n が3個以上並んでも 2 個に整える（やりすぎ防止）
+    .replace(/⟦\/H⟧\n{3,}/g, '⟦/H⟧\n\n');
 }
+
 
 
   // ========== フォールバックMarkdown（marked不在時） ==========
