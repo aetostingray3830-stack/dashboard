@@ -92,7 +92,8 @@ document.addEventListener('DOMContentLoaded', () => {
     return toStr(md).replace(/＃/g, '#').replace(/\r\n?/g, '\n');
   }
 
-  // 文字色：<font> を ⟦C:…⟧…⟦/C⟧ に一旦変換（Markdown解釈のため）
+  // ========== 色タグ：マーカー化 / 復元 / 剥がし ==========
+  // ⟦C:#hex⟧...⟦/C⟧ に一旦変換（Markdownを中で解釈させるため）
   function encodeColorMarkers(md){
     return String(md ?? '')
       .replace(/<font\b([^>]*)>/gi, (m, attrs) => {
@@ -107,15 +108,15 @@ document.addEventListener('DOMContentLoaded', () => {
       .replace(/⟦C:([^⟧]+)⟧/g, (_,c)=>`<span style="color:${escHtml(c)}">`)
       .replace(/⟦\/C⟧/g, '</span>');
   }
-  // TXT保存時：<font> とマーカーを完全除去
-  function stripAllColorTags(s){
-    return String(s ?? '')
+  // TXT出力用：<font> とマーカー両方を除去
+  function stripAllColorTags(mdOrText){
+    return String(mdOrText ?? '')
       .replace(/<\/?font\b[^>]*>/gi, '')
       .replace(/⟦C:[^⟧]+⟧/g, '')
       .replace(/⟦\/C⟧/g, '');
   }
 
-  // 見出しの本文内だけに効く超軽量インラインMD（太字/斜体/取り消し/コード）
+  // ========== インラインMarkdown（見出し内などで使う軽量処理） ==========
   function inlineMdToHtml(s){
     return String(s ?? '')
       .replace(/`([^`]+)`/g, '<code>$1</code>')
@@ -124,7 +125,7 @@ document.addEventListener('DOMContentLoaded', () => {
       .replace(/~~([^~]+)~~/g, '<del>$1</del>');
   }
 
-  // 見出しを先に <hN>…</hN> に
+  // ========== 見出し先行HTML化（id付与、見出し内の装飾OK） ==========
   function preprocessHeadings(md){
     const src = String(md ?? '');
     return src.replace(
@@ -141,7 +142,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function createRenderer(){ return new marked.Renderer(); }
 
-  // ファイル名/タイトル
+  // ========== ファイル名/タイトル ==========
   function memoTxtFilename() {
     const text = (memoArea && memoArea.value) || '';
     const m = text.match(/^ {0,3}#\s*(.+?)\s*#*\s*$/m);
@@ -149,8 +150,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const safe = base.replace(/[\\/:*?"<>|]/g,'_').trim().slice(0,80) || 'memo';
     return `${safe}.txt`;
   }
-  const memoHtmlFilename = ()=> memoTxtFilename().replace(/\.txt$/i, '.html');
-  const memoPdfFilename  = ()=> memoTxtFilename().replace(/\.txt$/i, '.pdf');
+  function memoHtmlFilename() { return memoTxtFilename().replace(/\.txt$/i, '.html'); }
+  function memoPdfFilename()  { return memoTxtFilename().replace(/\.txt$/i, '.pdf'); }
   function memoTitle() {
     const text = (memoArea && memoArea.value) || '';
     const m = text.match(/^ {0,3}#\s*(.+?)\s*#*\s*$/m);
@@ -202,20 +203,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderPreview(){
     if(!memoArea || !memoPreview) return;
-    const raw = (memoArea && memoArea.value) || '';
 
-    // 1) 正規化 → 色マーカー化 → 見出しHTML化
-    const md0 = normalizeMd(raw);
+    // 1) 正規化 → 色をマーカー化 → 見出しHTML化
+    const md0 = normalizeMd(memoArea.value || '');
     const md1 = encodeColorMarkers(md0);
     const mdPre = preprocessHeadings(md1);
 
-    // 2) Markdown→HTML
+    // 2) マークダウン本体をHTML化
     let html;
     if (typeof window.marked !== 'undefined' && marked?.parse) {
       marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
       html = marked.parse(mdPre);
     } else {
-      // フォールバック：最低限の置換（見出しは既にHTML）
+      // フォールバック：最低限の置換（見出しは既にHTML済み）
       let t = escHtml(mdPre);
       t = t
         .replace(/^> (.*)$/gm, '<blockquote>$1</blockquote>')
@@ -229,7 +229,7 @@ document.addEventListener('DOMContentLoaded', () => {
       html = `<p>${t}</p>`;
     }
 
-    // 3) 色マーカーを <span style="color:…"> に戻す
+    // 3) 色マーカーを実際の <span style="color:…"> に戻す
     html = decodeColorMarkersToHtml(html);
 
     // 4) 描画＆TOC更新
@@ -254,11 +254,11 @@ document.addEventListener('DOMContentLoaded', () => {
   if(editBtn)    editBtn.onclick    = showEdit;
   if(previewBtn) previewBtn.onclick = showPreview;
 
-  // .txt 保存：ブラウザ保存＋ダウンロード（DLテキストは色タグ完全除去）
+  // .txt 保存：ブラウザ保存＋ダウンロード（DLは 色タグ/マーカー を全部除去）
   if (saveMemoBtn) saveMemoBtn.onclick = async () => {
     if (!memoArea) return;
-    const val = memoArea.value;             // 本体は保持
-    const txtOut = stripAllColorTags(val);  // DLは <font> & マーカー除去
+    const val = memoArea.value;             // 本体（色タグ可）
+    const txtOut = stripAllColorTags(val);  // DL用（色タグ/マーカー除去）
     let savedWhere = [];
     try { if (lsSet(memoKey, val)) savedWhere.push('localStorage'); } catch{}
     if (!savedWhere.length) {
@@ -290,7 +290,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   buildTOC((memoArea && normalizeMd(memoArea.value))||'');
 
-  /* ===== ワンクリック挿入ツールバー（色対応） ===== */
+  /* ===== ツールバー（色パレット付き） ===== */
   function applyColorToSelection(hex){
     const ta = memoArea; if(!ta) return;
     const v = ta.value;
@@ -314,9 +314,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const contentAbsStart = lineStart + contentStartInLine;
       const contentAbsEnd   = lineStart + contentEndInLine;
 
-      if (s === e) {
-        s = contentAbsStart; e = contentAbsEnd; // 見出し本文全体
-      } else {
+      if (s === e) { s = contentAbsStart; e = contentAbsEnd; }
+      else {
         const overlapsThisLine = !(e <= lineStart || s >= lineEnd);
         if (overlapsThisLine) {
           const ns = Math.max(s, contentAbsStart);
@@ -326,11 +325,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
     } else if (s === e) {
-      // 通常行で空選択ならプレースホルダ
       const before = v.slice(0, s), after = v.slice(e);
       const selected = 'テキスト';
-      ta.value = `${before}⟦C:${hex}⟧${selected}⟦/C⟧${after}`;
-      const pos = (before + `⟦C:${hex}⟧${selected}⟦/C⟧`).length;
+      ta.value = `${before}<font color="${hex}">${selected}</font>${after}`;
+      const pos = (before + `<font color="${hex}">${selected}</font>`).length;
       ta.focus(); ta.setSelectionRange(pos, pos);
       ta.dispatchEvent(new Event('input'));
       return;
@@ -339,8 +337,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const before = v.slice(0, s);
     const selected = v.slice(s, e) || 'テキスト';
     const after = v.slice(e);
-    ta.value = `${before}⟦C:${hex}⟧${selected}⟦/C⟧${after}`;
-    const pos = (before + `⟦C:${hex}⟧${selected}⟦/C⟧`).length;
+    ta.value = `${before}<font color="${hex}">${selected}</font>${after}`;
+    const pos = (before + `<font color="${hex}">${selected}</font>`).length;
     ta.focus(); ta.setSelectionRange(pos, pos);
     ta.dispatchEvent(new Event('input'));
   }
@@ -352,36 +350,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (s < e) {
       const selected = v.slice(s,e);
-      const stripped = stripAllColorTags(selected);
+      const stripped = selected.replace(/<\/?font\b[^>]*>/gi, '');
       ta.value = v.slice(0,s) + stripped + v.slice(e);
       const pos = s + stripped.length;
       ta.focus(); ta.setSelectionRange(pos,pos);
       ta.dispatchEvent(new Event('input'));
       return;
     }
-    // 空選択：カーソルがマーカー内/フォント内ならそれを剥がす
-    const before = v.slice(0,s), after = v.slice(s);
-    // 1) マーカー
-    const openIdx = before.lastIndexOf('⟦C:');
-    const closeIdx = after.indexOf('⟦/C⟧');
+    // 空選択：カーソルが <font>…</font> 内ならその1組を剥がす
+    const openIdx = v.lastIndexOf('<font', s);
+    const closeIdx = v.indexOf('</font>', s);
     if (openIdx !== -1 && closeIdx !== -1) {
-      const mid = v.slice(openIdx, s + closeIdx + '⟦/C⟧'.length);
-      const inner = stripAllColorTags(mid);
-      ta.value = v.slice(0, openIdx) + inner + v.slice(s + closeIdx + '⟦/C⟧'.length);
-      const pos = openIdx + inner.length;
-      ta.focus(); ta.setSelectionRange(pos,pos);
-      ta.dispatchEvent(new Event('input'));
-      return;
-    }
-    // 2) fontタグ
-    const of = v.lastIndexOf('<font', s);
-    const cf = v.indexOf('</font>', s);
-    if (of !== -1 && cf !== -1) {
-      const oe = v.indexOf('>', of);
-      if (oe !== -1 && oe < s && cf >= s) {
-        const inner = v.slice(oe+1, cf);
-        ta.value = v.slice(0, of) + inner + v.slice(cf + 7);
-        const pos = of + inner.length;
+      const openEnd = v.indexOf('>', openIdx);
+      if (openEnd !== -1 && openEnd < s && closeIdx >= s) {
+        const inner = v.slice(openEnd+1, closeIdx);
+        ta.value = v.slice(0, openIdx) + inner + v.slice(closeIdx + 7);
+        const pos = openIdx + inner.length;
         ta.focus(); ta.setSelectionRange(pos,pos);
         ta.dispatchEvent(new Event('input'));
       }
@@ -496,8 +480,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const v=ta.value; const start=v.lastIndexOf('\n', s-1)+1; const end=e===v.length? e : v.indexOf('\n', e)+1;
       const block=v.slice(start, end<0?v.length:end); const lines=block.split(/\n/);
       const already = lines.every(l=> /^\d+\.\s/.test(l));
-      const result = already ? lines.map(l=> l.replace(/^\d+\.\s/,''))
-                             : lines.map((l,i)=> `${i+1}. ${l||''}`);
+      const result = already ? lines.map(l=> l.replace(/^\d+\.\s/,'')) : lines.map((l,i)=> `${i+1}. ${l||''}`);
       ta.value = v.slice(0,start) + result.join('\n') + v.slice(start+block.length);
       ta.focus(); ta.setSelectionRange(start, start+result.join('\n').length);
       ta.dispatchEvent(new Event('input'));
@@ -515,7 +498,6 @@ document.addEventListener('DOMContentLoaded', () => {
     color(btn){ showColorPopover(btn); },
     uncolor(){ removeColorFromSelection(); }
   };
-
   if (toolbarLeft) toolbarLeft.addEventListener('click', (e)=>{
     const btn = e.target.closest('button'); if(!btn) return;
     const act = btn.dataset.act; const lvl = parseInt(btn.dataset.level||'0',10);
@@ -589,7 +571,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(()=> exportHtmlBtn.textContent = 'HTML保存', 1400);
   };
 
-  // PDF：非表示ホストに完全HTMLを構築→html2pdfで保存
+  // PDF：非表示ホストに完全HTMLを構築→html2pdfでその要素を保存
   if (exportPdfBtn) exportPdfBtn.onclick = async () => {
     if (!memoArea) return;
 
@@ -695,10 +677,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   if(clearTodos) clearTodos.onclick=()=>{ if(confirm('ToDoを全て消しますか？')){ lsSet(todoKey,'[]'); renderTodos(); } };
 
-  /* ===== YouTube 入力（URL/ID/プレイリスト対応） ===== */
-  const playlistInput=document.getElementById('playlistInput');
+  /* ===== YouTube 入力（URL/ID対応） ===== */
   function parseYouTubeInput(input){
     const s = String(input || '').trim();
+    // 1) URLとして解釈
     try{
       const u = new URL(s);
       const list = u.searchParams.get('list');
@@ -708,11 +690,14 @@ document.addEventListener('DOMContentLoaded', () => {
         return { video: u.pathname.slice(1) };
       }
       if (v) return { video:v };
-    }catch{}
+    }catch{ /* 非URL */ }
+    // 2) プレーンID
     if (/^PL[\w-]+$/i.test(s)) return { playlist:s };
     if (/^[\w-]{11}$/.test(s)) return { video:s };
     return {};
   }
+
+  const playlistInput=document.getElementById('playlistInput');
   if(playlistInput) playlistInput.addEventListener('keydown', e=>{
     if(e.key!=='Enter') return;
     const v=playlistInput.value.trim(); if(!v||!player) return;
