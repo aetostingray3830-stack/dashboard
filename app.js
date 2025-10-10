@@ -85,7 +85,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const toStr = (v)=> (typeof v==='string'? v : (v==null? '' : String(v)));
   const escHtml = (s)=> String(s).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
   const slugify = (str)=> toStr(str).toLowerCase().trim()
-    .replace(/[^\w\- \u3000-\u9fff]/g,'').replace(/\s+/g,'-').replace(/-+/g,'-');
+  // 全角数字 \uFF10-\uFF19 を許可
+  .replace(/[^\w\- \u3000-\u9fff\uFF10-\uFF19]/g,'')
+  .replace(/\s+/g,'-').replace(/-+/g,'-');
 
   // Markdown正規化（全角＃→半角、CRLF→LF）
   function normalizeMd(md){
@@ -150,14 +152,26 @@ document.addEventListener('DOMContentLoaded', () => {
 function fallbackMarkdownToHtml(mdPre){
   const blocks = String(mdPre ?? '').split(/\n{2,}/);
   const out = [];
+
   const inline = (s) => String(s ?? '')
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
     .replace(/~~([^~]+)~~/g, '<del>$1</del>');
+
   for(const raw of blocks){
-    const b = raw.replace(/\s+$/,''); if(!b.trim()) continue;
-    if (/^<h[1-6]\b/i.test(b.trim())) { out.push(b.trim()); continue; }
+    const b = raw.replace(/\s+$/,'');
+    if(!b.trim()) continue;
+
+   // 見出しで始まるブロック：見出し + 残り（残りは再帰処理）
+   const hm = b.match(/^(\s*<h[1-6]\b[\s\S]*?<\/h[1-6]>)\s*([\s\S]*)$/i);
+   if (hm) {
+     out.push(hm[1].trim());
+     const rest = hm[2].trim();
+     if (rest) out.push(fallbackMarkdownToHtml(rest));
+     continue;
+   }
+
     const lines = b.split('\n');
     if (lines.every(l => /^\s*-\s+/.test(l))) {
       const items = lines.map(l => `<li>${inline(l.replace(/^\s*-\s+/,''))}</li>`).join('');
@@ -184,10 +198,21 @@ function fallbackMarkdownToHtml(mdPre){
   function memoHtmlFilename() { return memoTxtFilename().replace(/\.txt$/i, '.html'); }
   function memoPdfFilename()  { return memoTxtFilename().replace(/\.txt$/i, '.pdf'); }
   function memoTitle() {
-    const text = (memoArea && memoArea.value) || '';
-    const m = text.match(/^ {0,3}#\s*(.+?)\s*#*\s*$/m);
-    return (m ? m[1] : 'Memo');
-  }
+  const text = (memoArea && memoArea.value) || '';
+  const m = text.match(/^ {0,3}#\s*(.+?)\s*#*\s*$/m);
+  if (!m) return 'Memo';
+  // 色タグ/マーカーを外し、簡易的に装飾記号も除去
+  const raw = m[1];
+  const noColor = stripAllColorTags(raw);
+  const plain = noColor
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/~~([^~]+)~~/g, '$1')
+    .replace(/<[^>]*>/g,'')
+    .trim();
+  return plain || 'Memo';
+}
 
   /* ===== 時計 ===== */
   const clockEl=document.getElementById('clock');
