@@ -1,35 +1,15 @@
-/* =========  IFrame API ========= */
+/* ========= YouTube IFrame API ========= */
 let player;
-function onIframeAPIReady(){
+function onYouTubeIframeAPIReady(){
   try{
     player = new YT.Player('ytplayer', {
       height:'100%', width:'100%',
-      host:'https://www..com',
+      host:'https://www.youtube.com',
       playerVars:{ playsinline:1, rel:0, origin: location.origin }
     });
   }catch(e){ console.error(e); }
 }
-window.onIframeAPIReady = onIframeAPIReady;
-
-function parseYouTubeInput(input){
-  const s = String(input || '').trim();
-  // 1) URLとして解釈できるならURLから
-  try{
-    const u = new URL(s);
-    const list = u.searchParams.get('list');
-    const v    = u.searchParams.get('v');
-    if (list) return { playlist:list };
-    if (u.hostname === 'youtu.be' && u.pathname.length > 1) {
-      return { video: u.pathname.slice(1) };
-    }
-    if (v) return { video:v };
-  }catch{ /* 2) 非URL */ }
-  // 2) プレーンなID
-  if (/^PL[\w-]+$/i.test(s)) return { playlist:s };
-  if (/^[\w-]{11}$/.test(s)) return { video:s };
-  return {};
-}
-
+window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
 
 /* ========= アプリ初期化 ========= */
 document.addEventListener('DOMContentLoaded', () => {
@@ -107,40 +87,44 @@ document.addEventListener('DOMContentLoaded', () => {
   const slugify = (str)=> toStr(str).toLowerCase().trim()
     .replace(/[^\w\- \u3000-\u9fff]/g,'').replace(/\s+/g,'-').replace(/-+/g,'-');
 
-  // ⟦C:#hex⟧...⟦/C⟧ というプレースホルダにエンコード
-function encodeColorMarkers(md){
-  return String(md ?? '')
-    .replace(/<font\b([^>]*)>/gi, (m, attrs) => {
-      const col = (attrs.match(/color\s*=\s*["']?([#\w()-]+)["']?/i) || [])[1];
-      return col ? `⟦C:${col}⟧` : '';
-    })
-    .replace(/<\/font>/gi, '⟦/C⟧');
-}
-// プレースホルダをHTMLに戻す
-function decodeColorMarkersToHtml(html){
-  return String(html ?? '')
-    .replace(/⟦C:([^⟧]+)⟧/g, (_,c)=>`<span style="color:${escHtml(c)}">`)
-    .replace(/⟦\/C⟧/g, '</span>');
-}
-// TXT出力用：<font> とプレースホルダを両方除去
-function stripAllColorTags(mdOrText){
-  return String(mdOrText ?? '')
-    .replace(/<\/?font\b[^>]*>/gi, '')
-    .replace(/⟦C:[^⟧]+⟧/g, '')
-    .replace(/⟦\/C⟧/g, '');
-}
-
   // Markdown正規化（全角＃→半角、CRLF→LF）
   function normalizeMd(md){
     return toStr(md).replace(/＃/g, '#').replace(/\r\n?/g, '\n');
   }
 
-  // TXT保存用：<font> タグを除去（中身は残す）
-  function stripFontTags(md){
-    return toStr(md).replace(/<\/?font\b[^>]*>/gi, '');
+  // 文字色：<font> を ⟦C:…⟧…⟦/C⟧ に一旦変換（Markdown解釈のため）
+  function encodeColorMarkers(md){
+    return String(md ?? '')
+      .replace(/<font\b([^>]*)>/gi, (m, attrs) => {
+        const col = (attrs.match(/color\s*=\s*["']?([#\w()-]+)["']?/i) || [])[1];
+        return col ? `⟦C:${col}⟧` : '';
+      })
+      .replace(/<\/font>/gi, '⟦/C⟧');
+  }
+  // マーカーを <span style="color:..."> に戻す
+  function decodeColorMarkersToHtml(html){
+    return String(html ?? '')
+      .replace(/⟦C:([^⟧]+)⟧/g, (_,c)=>`<span style="color:${escHtml(c)}">`)
+      .replace(/⟦\/C⟧/g, '</span>');
+  }
+  // TXT保存時：<font> とマーカーを完全除去
+  function stripAllColorTags(s){
+    return String(s ?? '')
+      .replace(/<\/?font\b[^>]*>/gi, '')
+      .replace(/⟦C:[^⟧]+⟧/g, '')
+      .replace(/⟦\/C⟧/g, '');
   }
 
-  // 見出しだけを先にHTML化して <font> をエスケープさせない前処理
+  // 見出しの本文内だけに効く超軽量インラインMD（太字/斜体/取り消し/コード）
+  function inlineMdToHtml(s){
+    return String(s ?? '')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+      .replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  }
+
+  // 見出しを先に <hN>…</hN> に
   function preprocessHeadings(md){
     const src = String(md ?? '');
     return src.replace(
@@ -149,9 +133,7 @@ function stripAllColorTags(mdOrText){
         const level = hashes.length;
         const plain = String(innerMd).replace(/<[^>]*>/g, '');
         const id = slugify(plain);
-        const innerHtml = (window.marked && marked.parseInline)
-          ? marked.parseInline(innerMd)
-          : innerMd;
+        const innerHtml = inlineMdToHtml(innerMd);
         return `<h${level} id="${id}">${innerHtml}</h${level}>`;
       }
     );
@@ -167,8 +149,8 @@ function stripAllColorTags(mdOrText){
     const safe = base.replace(/[\\/:*?"<>|]/g,'_').trim().slice(0,80) || 'memo';
     return `${safe}.txt`;
   }
-  function memoHtmlFilename() { return memoTxtFilename().replace(/\.txt$/i, '.html'); }
-  function memoPdfFilename()  { return memoTxtFilename().replace(/\.txt$/i, '.pdf'); }
+  const memoHtmlFilename = ()=> memoTxtFilename().replace(/\.txt$/i, '.html');
+  const memoPdfFilename  = ()=> memoTxtFilename().replace(/\.txt$/i, '.pdf');
   function memoTitle() {
     const text = (memoArea && memoArea.value) || '';
     const m = text.match(/^ {0,3}#\s*(.+?)\s*#*\s*$/m);
@@ -202,9 +184,7 @@ function stripAllColorTags(mdOrText){
 
   function buildTOC(md){
     if(!tocList) return;
-    const text0 = normalizeMd(md);
-    const text1 = encodeColorMarkers(text0);     // ← 追加
-    const textPre = preprocessHeadings(text1);
+    const text = normalizeMd(md);
     const lines = text.split('\n'), items=[];
     for(const line of lines){
       const m = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
@@ -222,48 +202,39 @@ function stripAllColorTags(mdOrText){
 
   function renderPreview(){
     if(!memoArea || !memoPreview) return;
-
     const raw = (memoArea && memoArea.value) || '';
-const md0 = normalizeMd(raw);
-const md1 = encodeColorMarkers(md0);     // ← 追加：色タグをマーカー化
-const mdPre = preprocessHeadings(md1);   // ← 見出しHTML化は従来どおり
 
-    const fallbackHtml = (() => {
-      let t = escHtml(md);
-      t = t.replace(/&lt;font(\s+[^&]*)&gt;/g, '<font$1>')
-           .replace(/&lt;\/font&gt;/g, '</font>');
+    // 1) 正規化 → 色マーカー化 → 見出しHTML化
+    const md0 = normalizeMd(raw);
+    const md1 = encodeColorMarkers(md0);
+    const mdPre = preprocessHeadings(md1);
+
+    // 2) Markdown→HTML
+    let html;
+    if (typeof window.marked !== 'undefined' && marked?.parse) {
+      marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
+      html = marked.parse(mdPre);
+    } else {
+      // フォールバック：最低限の置換（見出しは既にHTML）
+      let t = escHtml(mdPre);
       t = t
-        .replace(/^ {0,3}######\s+(.*?)\s*#*\s*$/gm, '<h6>$1</h6>')
-        .replace(/^ {0,3}#####\s+(.*?)\s*#*\s*$/gm,  '<h5>$1</h5>')
-        .replace(/^ {0,3}####\s+(.*?)\s*#*\s*$/gm,   '<h4>$1</h4>')
-        .replace(/^ {0,3}###\s+(.*?)\s*#*\s*$/gm,    '<h3>$1</h3>')
-        .replace(/^ {0,3}##\s+(.*?)\s*#*\s*$/gm,     '<h2>$1</h2>')
-        .replace(/^ {0,3}#\s+(.*?)\s*#*\s*$/gm,      '<h1>$1</h1>')
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.+?)\*/g,     '<em>$1</em>')
-        .replace(/`([^`]+)`/g,     '<code>$1</code>')
-        .replace(/^\-\s+(.*)$/gm,  '<li>$1</li>')
+        .replace(/^> (.*)$/gm, '<blockquote>$1</blockquote>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+        .replace(/~~([^~]+)~~/g, '<del>$1</del>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/^\s*-\s+(.*)$/gm, '<li>$1</li>')
         .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>')
         .replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
-      return `<p>${t}</p>`;
-    })();
-
-    let html = fallbackHtml;
-    try {
-      if (typeof window.marked !== 'undefined') {
-        marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
-        html = marked.parse(mdPre);
-        html = decodeColorMarkersToHtml(html); // ← 追加：最後に色を <span> へ
-      }
-    } catch (e) {
-      console.error('marked parse failed, fallback used:', e);
-      html = fallbackHtml;
+      html = `<p>${t}</p>`;
     }
 
-    try { memoPreview.innerHTML = html; }
-    catch(e){ console.error(e); memoPreview.innerHTML = '<p style="opacity:.7">プレビューで問題が発生しました。</p>'; }
+    // 3) 色マーカーを <span style="color:…"> に戻す
+    html = decodeColorMarkersToHtml(html);
 
-    try { buildTOC(md); } catch(e){ console.error('TOC build failed:', e); }
+    // 4) 描画＆TOC更新
+    memoPreview.innerHTML = html;
+    buildTOC(md0);
   }
 
   function showEdit(){
@@ -283,18 +254,18 @@ const mdPre = preprocessHeadings(md1);   // ← 見出しHTML化は従来どお�
   if(editBtn)    editBtn.onclick    = showEdit;
   if(previewBtn) previewBtn.onclick = showPreview;
 
-  // .txt 保存：ブラウザ保存＋ダウンロード（DLは <font> を全部除去）
+  // .txt 保存：ブラウザ保存＋ダウンロード（DLテキストは色タグ完全除去）
   if (saveMemoBtn) saveMemoBtn.onclick = async () => {
     if (!memoArea) return;
-    const val = memoArea.value;             // 本体（色タグ含む）
-    const txtOut = stripAllColorTags(val);  // 新：<font> とマーカー両方を除去      // DL用（色タグ除去）
+    const val = memoArea.value;             // 本体は保持
+    const txtOut = stripAllColorTags(val);  // DLは <font> & マーカー除去
     let savedWhere = [];
     try { if (lsSet(memoKey, val)) savedWhere.push('localStorage'); } catch{}
     if (!savedWhere.length) {
       try { await idbInit(); if (await idbSet(memoKey, val)) savedWhere.push('IndexedDB'); } catch{}
     }
     const name = memoTxtFilename();
-    const dlOK = downloadTxt(txtOut, name); // ★ ダウンロードはフォントタグ無し
+    const dlOK = downloadTxt(txtOut, name);
     const okParts = [...savedWhere, dlOK ? 'DL(タグ除去)' : null].filter(Boolean);
     saveMemoBtn.textContent = okParts.length ? `保存OK：${okParts.join(' + ')}` : '保存失敗';
     setTimeout(()=> saveMemoBtn.textContent = '保存', 1600);
@@ -358,8 +329,8 @@ const mdPre = preprocessHeadings(md1);   // ← 見出しHTML化は従来どお�
       // 通常行で空選択ならプレースホルダ
       const before = v.slice(0, s), after = v.slice(e);
       const selected = 'テキスト';
-      ta.value = `${before}<font color="${hex}">${selected}</font>${after}`;
-      const pos = (before + `<font color="${hex}">${selected}</font>`).length;
+      ta.value = `${before}⟦C:${hex}⟧${selected}⟦/C⟧${after}`;
+      const pos = (before + `⟦C:${hex}⟧${selected}⟦/C⟧`).length;
       ta.focus(); ta.setSelectionRange(pos, pos);
       ta.dispatchEvent(new Event('input'));
       return;
@@ -368,8 +339,8 @@ const mdPre = preprocessHeadings(md1);   // ← 見出しHTML化は従来どお�
     const before = v.slice(0, s);
     const selected = v.slice(s, e) || 'テキスト';
     const after = v.slice(e);
-    ta.value = `${before}<font color="${hex}">${selected}</font>${after}`;
-    const pos = (before + `<font color="${hex}">${selected}</font>`).length;
+    ta.value = `${before}⟦C:${hex}⟧${selected}⟦/C⟧${after}`;
+    const pos = (before + `⟦C:${hex}⟧${selected}⟦/C⟧`).length;
     ta.focus(); ta.setSelectionRange(pos, pos);
     ta.dispatchEvent(new Event('input'));
   }
@@ -381,22 +352,36 @@ const mdPre = preprocessHeadings(md1);   // ← 見出しHTML化は従来どお�
 
     if (s < e) {
       const selected = v.slice(s,e);
-      const stripped = selected.replace(/<\/?font\b[^>]*>/gi, '');
+      const stripped = stripAllColorTags(selected);
       ta.value = v.slice(0,s) + stripped + v.slice(e);
       const pos = s + stripped.length;
       ta.focus(); ta.setSelectionRange(pos,pos);
       ta.dispatchEvent(new Event('input'));
       return;
     }
-    // 空選択：カーソルが <font>…</font> 内ならその1組を剥がす
-    const openIdx = v.lastIndexOf('<font', s);
-    const closeIdx = v.indexOf('</font>', s);
+    // 空選択：カーソルがマーカー内/フォント内ならそれを剥がす
+    const before = v.slice(0,s), after = v.slice(s);
+    // 1) マーカー
+    const openIdx = before.lastIndexOf('⟦C:');
+    const closeIdx = after.indexOf('⟦/C⟧');
     if (openIdx !== -1 && closeIdx !== -1) {
-      const openEnd = v.indexOf('>', openIdx);
-      if (openEnd !== -1 && openEnd < s && closeIdx >= s) {
-        const inner = v.slice(openEnd+1, closeIdx);
-        ta.value = v.slice(0, openIdx) + inner + v.slice(closeIdx + 7);
-        const pos = openIdx + inner.length;
+      const mid = v.slice(openIdx, s + closeIdx + '⟦/C⟧'.length);
+      const inner = stripAllColorTags(mid);
+      ta.value = v.slice(0, openIdx) + inner + v.slice(s + closeIdx + '⟦/C⟧'.length);
+      const pos = openIdx + inner.length;
+      ta.focus(); ta.setSelectionRange(pos,pos);
+      ta.dispatchEvent(new Event('input'));
+      return;
+    }
+    // 2) fontタグ
+    const of = v.lastIndexOf('<font', s);
+    const cf = v.indexOf('</font>', s);
+    if (of !== -1 && cf !== -1) {
+      const oe = v.indexOf('>', of);
+      if (oe !== -1 && oe < s && cf >= s) {
+        const inner = v.slice(oe+1, cf);
+        ta.value = v.slice(0, of) + inner + v.slice(cf + 7);
+        const pos = of + inner.length;
         ta.focus(); ta.setSelectionRange(pos,pos);
         ta.dispatchEvent(new Event('input'));
       }
@@ -542,37 +527,28 @@ const mdPre = preprocessHeadings(md1);   // ← 見出しHTML化は従来どお�
 
   /* ===== Markdown → HTML 変換 & HTML/ PDF 書き出し ===== */
   function markdownToHtmlBody(md) {
-    const text = normalizeMd(md);
-    const textPre = preprocessHeadings(text); // 見出しは先にHTML化
+    const text0 = normalizeMd(md);
+    const text1 = encodeColorMarkers(text0);
+    const textPre = preprocessHeadings(text1);
 
-    const fallback = (() => {
-      let t = escHtml(text);
-      t = t.replace(/&lt;font(\s+[^&]*)&gt;/g, '<font$1>')
-           .replace(/&lt;\/font&gt;/g, '</font>');
+    let out;
+    if (typeof window.marked !== 'undefined' && marked?.parse) {
+      marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
+      out = marked.parse(textPre);
+    } else {
+      let t = escHtml(textPre);
       t = t
-        .replace(/^ {0,3}######\s+(.*?)\s*#*\s*$/gm, '<h6>$1</h6>')
-        .replace(/^ {0,3}#####\s+(.*?)\s*#*\s*$/gm,  '<h5>$1</h5>')
-        .replace(/^ {0,3}####\s+(.*?)\s*#*\s*$/gm,   '<h4>$1</h4>')
-        .replace(/^ {0,3}###\s+(.*?)\s*#*\s*$/gm,    '<h3>$1</h3>')
-        .replace(/^ {0,3}##\s+(.*?)\s*#*\s*$/gm,     '<h2>$1</h2>')
-        .replace(/^ {0,3}#\s+(.*?)\s*#*\s*$/gm,      '<h1>$1</h1>')
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.+?)\*/g,     '<em>$1</em>')
-        .replace(/`([^`]+)`/g,     '<code>$1</code>')
-        .replace(/^\-\s+(.*)$/gm,  '<li>$1</li>')
+        .replace(/^> (.*)$/gm, '<blockquote>$1</blockquote>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+        .replace(/~~([^~]+)~~/g, '<del>$1</del>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/^\s*-\s+(.*)$/gm, '<li>$1</li>')
         .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>')
         .replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
-      return `<p>${t}</p>`;
-    })();
-
-    try {
-      if (typeof window.marked !== 'undefined') {
-        marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
-        const out = marked.parse(textPre);
-        return decodeColorMarkersToHtml(out);        // ← 追加
-      }
-    } catch(e){ console.error(e); }
-    return fallback;
+      out = `<p>${t}</p>`;
+    }
+    return decodeColorMarkersToHtml(out);
   }
 
   function buildStandaloneHtml(title, innerHtml) {
@@ -613,7 +589,7 @@ const mdPre = preprocessHeadings(md1);   // ← 見出しHTML化は従来どお�
     setTimeout(()=> exportHtmlBtn.textContent = 'HTML保存', 1400);
   };
 
-  // ★ PDF：iframe非使用。非表示ホストに完全HTMLを構築→html2pdfでその要素を保存
+  // PDF：非表示ホストに完全HTMLを構築→html2pdfで保存
   if (exportPdfBtn) exportPdfBtn.onclick = async () => {
     if (!memoArea) return;
 
@@ -719,8 +695,24 @@ const mdPre = preprocessHeadings(md1);   // ← 見出しHTML化は従来どお�
   });
   if(clearTodos) clearTodos.onclick=()=>{ if(confirm('ToDoを全て消しますか？')){ lsSet(todoKey,'[]'); renderTodos(); } };
 
-  /* =====  入力 ===== */
+  /* ===== YouTube 入力（URL/ID/プレイリスト対応） ===== */
   const playlistInput=document.getElementById('playlistInput');
+  function parseYouTubeInput(input){
+    const s = String(input || '').trim();
+    try{
+      const u = new URL(s);
+      const list = u.searchParams.get('list');
+      const v    = u.searchParams.get('v');
+      if (list) return { playlist:list };
+      if (u.hostname === 'youtu.be' && u.pathname.length > 1) {
+        return { video: u.pathname.slice(1) };
+      }
+      if (v) return { video:v };
+    }catch{}
+    if (/^PL[\w-]+$/i.test(s)) return { playlist:s };
+    if (/^[\w-]{11}$/.test(s)) return { video:s };
+    return {};
+  }
   if(playlistInput) playlistInput.addEventListener('keydown', e=>{
     if(e.key!=='Enter') return;
     const v=playlistInput.value.trim(); if(!v||!player) return;
