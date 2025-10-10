@@ -184,22 +184,26 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   function buildTOC(md){
-    if(!tocList) return;
-    const text = normalizeMd(md);
-    const lines = text.split('\n'), items=[];
-    for(const line of lines){
-      const m = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
-      if(m){ items.push({level:m[1].length, text:m[2].trim()}); }
+  if(!tocList) return;
+  const text = normalizeMd(md);
+  const lines = text.split('\n'), items=[];
+  for(const line of lines){
+   const m = line.match(/^ {0,3}(#{1,6})\s+([\s\S]+?)\s*#*\s*$/);
+    if(m){
+     // 見出し本文から <font>…</font> を除去して純テキスト化
+     const raw = m[2].replace(/<\/?font\b[^>]*>/gi,'').trim();
+     items.push({level:m[1].length, text:raw});
     }
-    tocList.innerHTML='';
-    items.forEach(it=>{
-      const id=slugify(it.text);
-      const li=document.createElement('li'); li.className='lvl'+it.level;
-      const a=document.createElement('a'); a.href='#'+id; a.textContent=it.text;
-      a.onclick=(e)=>{ e.preventDefault(); const el=document.getElementById(id); if(el) el.scrollIntoView({behavior:'smooth'}) }
-      li.appendChild(a); tocList.appendChild(li);
-    });
   }
+  tocList.innerHTML='';
+  items.forEach(it=>{
+    const id=slugify(it.text);
+    const li=document.createElement('li'); li.className='lvl'+it.level;
+    const a=document.createElement('a'); a.href='#'+id; a.textContent=it.text;
+    a.onclick=(e)=>{ e.preventDefault(); const el=document.getElementById(id); if(el) el.scrollIntoView({behavior:'smooth'}) }
+    li.appendChild(a); tocList.appendChild(li);
+  });
+}
 
   function renderPreview(){
   if(!memoArea || !memoPreview) return;
@@ -217,9 +221,53 @@ document.addEventListener('DOMContentLoaded', () => {
     marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
     html = marked.parse(mdPre);
   } else {
-    // フォールバック（最低限のインライン装飾＋引用・箇条書き）
-    // 新：ブロック単位のパーサ
     html = fallbackMarkdownToHtml(mdPre);
+}
+html = decodeColorMarkersToHtml(html);
+    // フォールバック：空行でブロック分割 → p/ul/blockquote を生成し、
+// 各ブロック内で ** / * / ~~ / ` を確実に変換
+function fallbackMarkdownToHtml(mdPre){
+  const blocks = String(mdPre ?? '').split(/\n{2,}/);
+  const out = [];
+
+  const inline = (s) => String(s ?? '')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/~~([^~]+)~~/g, '<del>$1</del>');
+
+  for(const raw of blocks){
+    const b = raw.replace(/\s+$/,'');
+    if(!b.trim()) continue;
+
+    // 見出し（preprocessHeadings 済み）はそのまま
+    if (/^<h[1-6]\b/i.test(b.trim())) { out.push(b.trim()); continue; }
+
+    const lines = b.split('\n');
+
+    // 箇条書き（- だけ簡易対応）
+    if (lines.every(l => /^\s*-\s+/.test(l))) {
+      const items = lines.map(l => {
+        const m = l.match(/^\s*-\s+(.*)$/);
+        return `<li>${inline(m ? m[1] : l)}</li>`;
+      }).join('');
+      out.push(`<ul>${items}</ul>`);
+      continue;
+    }
+
+    // 引用（> の連続）
+    if (lines.every(l => /^\s*>\s+/.test(l))) {
+      const q = lines.map(l => inline(l.replace(/^\s*>\s+/, ''))).join('<br>');
+      out.push(`<blockquote>${q}</blockquote>`);
+      continue;
+    }
+
+    // 通常段落（単一改行は <br>）
+    out.push(`<p>${inline(b).replace(/\n/g,'<br>')}</p>`);
+  }
+  return out.join('\n');
+}
+
 
   // 4) 色マーカーを <span style="color:…"> に復元（ここで色が付く）
   html = decodeColorMarkersToHtml(html);
@@ -878,55 +926,6 @@ document.addEventListener('DOMContentLoaded', () => {
   /* ===== Backdrop フォールバック ===== */
   const supportsBackdrop = CSS.supports('backdrop-filter','blur(10px)') || CSS.supports('-webkit-backdrop-filter','blur(10px)');
   if(!supportsBackdrop){ document.querySelectorAll('.glass').forEach(el=> el.style.background='rgba(255,255,255,.9)'); }
-
-// フォールバック用：ブロックごとに段落化（見出し/箇条書き/引用は尊重）
-function fallbackMarkdownToHtml(mdPre){
-  const blocks = String(mdPre ?? '').split(/\n{2,}/); // 空行でブロック区切り
-  const out = [];
-
-  const inline = (s) => s
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    .replace(/~~([^~]+)~~/g, '<del>$1</del>');
-
-  for (const raw of blocks) {
-    const b = raw.replace(/\s+$/,''); // 末尾空白除去
-    if (!b.trim()) continue;
-
-    // 既に見出しHTML（preprocessHeadings済み）
-    if (/^<h[1-6]\b/i.test(b.trim())) {
-      out.push(b.trim());
-      continue;
-    }
-
-    // 箇条書き（ブロック内の全行が "- " 始まりなら <ul>）
-    const lines = b.split('\n');
-    if (lines.every(l => /^\s*-\s+/.test(l))) {
-      const items = lines.map(l => {
-        const m = l.match(/^\s*-\s+(.*)$/);
-        return `<li>${inline(m ? m[1] : l)}</li>`;
-      }).join('');
-      out.push(`<ul>${items}</ul>`);
-      continue;
-    }
-
-    // 引用（全行が "> " 始まりなら <blockquote> の中で段落化）
-    if (lines.every(l => /^\s*>\s+/.test(l))) {
-      const q = lines.map(l => {
-        const m = l.match(/^\s*>\s+(.*)$/);
-        return inline(m ? m[1] : l);
-      }).join('<br>');
-      out.push(`<blockquote>${q}</blockquote>`);
-      continue;
-    }
-
-    // それ以外は通常段落（単一改行は <br>）
-    out.push(`<p>${inline(b).replace(/\n/g, '<br>')}</p>`);
-  }
-
-  return out.join('\n');
-}
 
   
   // 初期化確認ログ
