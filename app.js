@@ -1,15 +1,35 @@
-/* ========= YouTube IFrame API ========= */
+/* =========  IFrame API ========= */
 let player;
-function onYouTubeIframeAPIReady(){
+function onIframeAPIReady(){
   try{
     player = new YT.Player('ytplayer', {
       height:'100%', width:'100%',
-      host:'https://www.youtube.com',
+      host:'https://www..com',
       playerVars:{ playsinline:1, rel:0, origin: location.origin }
     });
   }catch(e){ console.error(e); }
 }
-window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
+window.onIframeAPIReady = onIframeAPIReady;
+
+function parseYouTubeInput(input){
+  const s = String(input || '').trim();
+  // 1) URLとして解釈できるならURLから
+  try{
+    const u = new URL(s);
+    const list = u.searchParams.get('list');
+    const v    = u.searchParams.get('v');
+    if (list) return { playlist:list };
+    if (u.hostname === 'youtu.be' && u.pathname.length > 1) {
+      return { video: u.pathname.slice(1) };
+    }
+    if (v) return { video:v };
+  }catch{ /* 2) 非URL */ }
+  // 2) プレーンなID
+  if (/^PL[\w-]+$/i.test(s)) return { playlist:s };
+  if (/^[\w-]{11}$/.test(s)) return { video:s };
+  return {};
+}
+
 
 /* ========= アプリ初期化 ========= */
 document.addEventListener('DOMContentLoaded', () => {
@@ -267,7 +287,7 @@ const mdPre = preprocessHeadings(md1);   // ← 見出しHTML化は従来どお�
   if (saveMemoBtn) saveMemoBtn.onclick = async () => {
     if (!memoArea) return;
     const val = memoArea.value;             // 本体（色タグ含む）
-    const txtOut = stripFontTags(val);      // DL用（色タグ除去）
+    const txtOut = stripAllColorTags(val);  // 新：<font> とマーカー両方を除去      // DL用（色タグ除去）
     let savedWhere = [];
     try { if (lsSet(memoKey, val)) savedWhere.push('localStorage'); } catch{}
     if (!savedWhere.length) {
@@ -699,13 +719,15 @@ const mdPre = preprocessHeadings(md1);   // ← 見出しHTML化は従来どお�
   });
   if(clearTodos) clearTodos.onclick=()=>{ if(confirm('ToDoを全て消しますか？')){ lsSet(todoKey,'[]'); renderTodos(); } };
 
-  /* ===== YouTube 入力 ===== */
+  /* =====  入力 ===== */
   const playlistInput=document.getElementById('playlistInput');
   if(playlistInput) playlistInput.addEventListener('keydown', e=>{
     if(e.key!=='Enter') return;
     const v=playlistInput.value.trim(); if(!v||!player) return;
-    if(v.startsWith('PL')) player.loadPlaylist({list:v,listType:'playlist',index:0});
-    else player.loadVideoById(v);
+    const p = parseYouTubeInput(v);
+    if (p.playlist) player.loadPlaylist({ list:p.playlist, listType:'playlist', index:0 });
+    else if (p.video) player.loadVideoById(p.video);
+    else alert('YouTubeのURL/IDが読めませんでした');
   });
   const playBtn=document.getElementById('playBtn');
   const pauseBtn=document.getElementById('pauseBtn');
