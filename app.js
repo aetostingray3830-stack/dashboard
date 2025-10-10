@@ -150,6 +150,26 @@ document.addEventListener('DOMContentLoaded', () => {
 }
 
 
+// 生成されたHTMLの <li> を後処理して、タスク表記を必ずチェックボックス化
+function normalizeTaskListHtml(html) {
+  let out = String(html || '');
+
+  // 1) すでに <input type="checkbox"> を含む <li> に class を付ける
+  out = out.replace(
+    /<li>(\s*<input\b[^>]*type=["']checkbox["'][^>]*>)/gi,
+    '<li class="task-item">$1'
+  );
+
+  // 2) [- [ ] text] / [- [x] text] の “角括弧タスク” を <input> に変換
+  //   例: <li>[ ] タスク</li> / <li>[x] タスク</li>
+  out = out.replace(
+    /<li>\s*\[([ xX])\]\s*([\s\S]*?)<\/li>/g,
+    (_, chk, body) =>
+      `<li class="task-item"><input type="checkbox" disabled ${/x/i.test(chk) ? 'checked' : ''}> ${body}</li>`
+  );
+
+  return out;
+}
 
 
 
@@ -326,9 +346,8 @@ function fallbackMarkdownToHtml(mdPre){
   // 4) 色マーカーを <span style="color:…"> に復元（ここで色が付く）
   html = decodeColorMarkersToHtml(html);
 
- // 4.5) チェックボックスを含む <li> にクラス付与（タスクの黒丸を消すため）
- html = html.replace(/<li>\s*<input([^>]*type=["']checkbox["'][^>]*)/g,
-                     '<li class="task-item"><input$1');
+  // 4.5) タスクリストを正規化（●を消し、checkbox化）
+ html = normalizeTaskListHtml(html);
 
   // 5) 反映＆TOC
   memoPreview.innerHTML = html;
@@ -633,15 +652,16 @@ function fallbackMarkdownToHtml(mdPre){
  // hタグ直後に空白しかない/すぐ文字が来るケースを念のため分離
  textPre = textPre.replace(/(<\/h[1-6]>)\s*(?=\S)/g, '$1\n\n');
 
-  let out;
+    let out;
   if (typeof window.marked !== 'undefined' && marked?.parse) {
     marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
     out = marked.parse(textPre);
   } else {
     out = fallbackMarkdownToHtml(textPre);
   }
-  return decodeColorMarkersToHtml(out);
-}
+ out = decodeColorMarkersToHtml(out);
+ return normalizeTaskListHtml(out);
+
 
   function buildStandaloneHtml(title, innerHtml) {
     const css = `
