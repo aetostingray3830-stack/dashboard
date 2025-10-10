@@ -134,16 +134,18 @@ document.addEventListener('DOMContentLoaded', () => {
     /^ {0,3}(#{1,6})\s+([\s\S]*?)\s*#*\s*$/gm,
     (m, hashes, innerMd) => {
       const level = hashes.length;
-     const plain = String(innerMd)
-       .replace(/⟦C:[^⟧]+⟧/g,'')   // ← 色マーカー除去
-       .replace(/⟦\/C⟧/g,'')
-       .replace(/<[^>]*>/g,'');     // ← 既存（font等）
+      const plain = String(innerMd)
+        .replace(/⟦C:[^⟧]+⟧/g,'')
+        .replace(/⟦\/C⟧/g,'')
+        .replace(/<[^>]*>/g,'');
       const id = slugify(plain);
       const innerHtml = inlineMdToHtml(innerMd);
-      return `<h${level} id="${id}">${innerHtml}</h${level}>`;
+     // ← 見出しの直後に「空行」を挿入して、次行の **太字** などを別ブロックで解釈させる
+     return `<h${level} id="${id}">${innerHtml}</h${level}>\n\n`;
     }
   );
 }
+
 
 
   function createRenderer(){ return new marked.Renderer(); }
