@@ -92,41 +92,29 @@ document.addEventListener('DOMContentLoaded', () => {
     return toStr(md).replace(/＃/g, '#').replace(/\r\n?/g, '\n');
   }
 
-  // marked のレンダラー（新旧API両対応）
+  // 見出しだけを先にHTML化して <font> をエスケープさせない前処理
+  function preprocessHeadings(md){
+    const src = String(md ?? '');
+    return src.replace(
+      /^ {0,3}(#{1,6})\s+([\s\S]*?)\s*#*\s*$/gm,
+      (m, hashes, innerMd) => {
+        const level = hashes.length;
+        // id はタグを除去したテキストから作る
+        const plain = String(innerMd).replace(/<[^>]*>/g, '');
+        const id = slugify(plain);
+        // 見出し本文はインラインとしてパース（<font> 等の素HTMLをそのまま通す）
+        const innerHtml = (window.marked && marked.parseInline)
+          ? marked.parseInline(innerMd)
+          : innerMd;
+        return `<h${level} id="${id}">${innerHtml}</h${level}>`;
+      }
+    );
+  }
+
+  // marked レンダラー（今回はカスタムheading不要。前処理で済ませる）
   function createRenderer(){
-  const renderer = new marked.Renderer();
-
-  renderer.heading = (a,b,c) => {
-    // 共通ヘルパ：行から見出し本文だけを抽出
-    const extractInnerMd = (raw, fallbackText) => {
-      const src = String(raw ?? fallbackText ?? '');
-      const m = src.match(/^ {0,3}(#{1,6})\s+([\s\S]*?)\s*#*\s*$/);
-      return m ? m[2] : String(fallbackText ?? src);
-    };
-    const toId = (innerMd) => slugify(String(innerMd).replace(/<[^>]*>/g, ''));
-
-    // 新API: 第1引数が token オブジェクト
-    if (a && typeof a === 'object' && ('raw' in a || 'text' in a || 'depth' in a)) {
-      const token = a;
-      const level = token.depth || token.level || b || 1;
-      const innerMd = extractInnerMd(token.raw, token.text);
-      // インラインとしてパース（<font> などのHTMLをそのまま通す）
-      const innerHtml = (marked.parseInline ? marked.parseInline(innerMd) : innerMd);
-      const id = toId(innerMd);
-      return `<h${level} id="${id}">${innerHtml}</h${level}>\n`;
-    }
-
-    // 旧API: (text, level, raw)
-    const text = a, level = b || 1, raw = c || a;
-    const innerMd = extractInnerMd(raw, text);
-    const innerHtml = (marked.parseInline ? marked.parseInline(innerMd) : innerMd);
-    const id = toId(innerMd);
-    return `<h${level} id="${id}">${innerHtml}</h${level}>\n`;
-  };
-
-  return renderer;
-}
-
+    return new marked.Renderer();
+  }
 
   // ファイル名/タイトル
   function memoTxtFilename() {
@@ -192,6 +180,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const raw = (memoArea && memoArea.value) || '';
     const md  = normalizeMd(raw);
+    const mdPre = preprocessHeadings(md); // 見出しは先にHTML化
 
     const fallbackHtml = (() => {
       let t = escHtml(md);
@@ -218,8 +207,8 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       if (typeof window.marked !== 'undefined') {
         marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
-        const renderer = createRenderer();
-        html = marked.parse(md, { renderer });
+        // 見出しは前処理でHTML化済みなので、そのままパース
+        html = marked.parse(mdPre);
       }
     } catch (e) {
       console.error('marked parse failed, fallback used:', e);
@@ -287,76 +276,67 @@ document.addEventListener('DOMContentLoaded', () => {
   /* ===== ワンクリック挿入ツールバー ===== */
 
   // ---- 色ユーティリティ（選択範囲に color 適用/解除） ----
-  // これで置き換え
-// 見出しを壊さずに色を付ける：選択が見出しをまたいでも「本文部分」だけに限定して <font> を付ける
-function applyColorToSelection(hex){
-  const ta = memoArea; if(!ta) return;
-  const v = ta.value;
-  let { selectionStart:s, selectionEnd:e } = ta;
+  function applyColorToSelection(hex){
+    const ta = memoArea; if(!ta) return;
+    const v = ta.value;
+    let { selectionStart:s, selectionEnd:e } = ta;
 
-  // 現在行の範囲
-  const lineStart = v.lastIndexOf('\n', s-1) + 1;
-  const nl = v.indexOf('\n', s);
-  const lineEnd = nl === -1 ? v.length : nl;
-  const line = v.slice(lineStart, lineEnd);
+    // 現在行の範囲
+    const lineStart = v.lastIndexOf('\n', s-1) + 1;
+    const nl = v.indexOf('\n', s);
+    const lineEnd = nl === -1 ? v.length : nl;
+    const line = v.slice(lineStart, lineEnd);
 
-  // 見出し行なら本文の絶対インデックスを求める
-  const m = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
-  let contentAbsStart = null, contentAbsEnd = null;
-  if (m) {
-    const hashes = m[1];
-    const hashPos = line.indexOf(hashes) + hashes.length;
-    const afterHashSpace = (line.slice(hashPos).match(/^\s*/)||[''])[0].length;
-    const contentStartInLine = hashPos + afterHashSpace;
+    // 見出し行なら本文の絶対インデックスを求める
+    const m = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+    let contentAbsStart = null, contentAbsEnd = null;
+    if (m) {
+      const hashes = m[1];
+      const hashPos = line.indexOf(hashes) + hashes.length;
+      const afterHashSpace = (line.slice(hashPos).match(/^\s*/)||[''])[0].length;
+      const contentStartInLine = hashPos + afterHashSpace;
 
-    let contentEndInLine = line.length;
-    const tail = (line.match(/\s*#*\s*$/)||[''])[0];
-    contentEndInLine = Math.max(contentStartInLine, line.length - tail.length);
+      const tail = (line.match(/\s*#*\s*$/)||[''])[0];
+      const contentEndInLine = Math.max(contentStartInLine, line.length - tail.length);
 
-    contentAbsStart = lineStart + contentStartInLine;
-    contentAbsEnd   = lineStart + contentEndInLine;
+      contentAbsStart = lineStart + contentStartInLine;
+      contentAbsEnd   = lineStart + contentEndInLine;
 
-    // 1) 選択が空 → 見出し本文全体に色
-    if (s === e) {
-      s = contentAbsStart;
-      e = contentAbsEnd;
-    } else {
-      // 2) 選択が見出し行の本文をまたぐ/被る → 本文内にクリップ
-      //    （行頭の # や行末の ### は含めない）
-      const overlapsThisLine =
-        !(e <= lineStart || s >= lineEnd); // 選択がこの行と無関係なら false
-      if (overlapsThisLine) {
-        const ns = Math.max(s, contentAbsStart);
-        const ne = Math.min(e, contentAbsEnd);
-        // クリップ後に逆転/空になったら、この行の本文全体にする
-        if (ns < ne) { s = ns; e = ne; }
-        else { s = contentAbsStart; e = contentAbsEnd; }
+      // 1) 選択が空 → 見出し本文全体に色
+      if (s === e) {
+        s = contentAbsStart; e = contentAbsEnd;
+      } else {
+        // 2) 選択が見出し行と重なる → 本文範囲にクリップ
+        const overlapsThisLine = !(e <= lineStart || s >= lineEnd);
+        if (overlapsThisLine) {
+          const ns = Math.max(s, contentAbsStart);
+          const ne = Math.min(e, contentAbsEnd);
+          if (ns < ne) { s = ns; e = ne; }
+          else { s = contentAbsStart; e = contentAbsEnd; }
+        }
       }
-      // 選択が複数行に跨っている場合でも、ここでは“現在行”の本文に限定して色を当てる仕様
+    } else {
+      // 見出しでなく空選択ならプレースホルダ
+      if (s === e) {
+        const before = v.slice(0, s), after = v.slice(e);
+        const selected = 'テキスト';
+        ta.value = `${before}<font color="${hex}">${selected}</font>${after}`;
+        const pos = (before + `<font color="${hex}">${selected}</font>`).length;
+        ta.focus(); ta.setSelectionRange(pos, pos);
+        ta.dispatchEvent(new Event('input'));
+        return;
+      }
     }
-  } else {
-    // 見出しでなければ通常どおり（空選択ならプレースホルダ）
-    if (s === e) {
-      const before = v.slice(0, s), after = v.slice(e);
-      const selected = 'テキスト';
-      ta.value = `${before}<font color="${hex}">${selected}</font>${after}`;
-      const pos = (before + `<font color="${hex}">${selected}</font>`).length;
-      ta.focus(); ta.setSelectionRange(pos, pos);
-      ta.dispatchEvent(new Event('input'));
-      return;
-    }
+
+    const before = v.slice(0, s);
+    const selected = v.slice(s, e) || 'テキスト';
+    const after = v.slice(e);
+    ta.value = `${before}<font color="${hex}">${selected}</font>${after}`;
+
+    const pos = (before + `<font color="${hex}">${selected}</font>`).length;
+    ta.focus(); ta.setSelectionRange(pos, pos);
+    ta.dispatchEvent(new Event('input'));
   }
-
-  // ここまで来たら s..e に最終確定。本文部分だけを包む
-  const before = v.slice(0, s);
-  const selected = v.slice(s, e) || 'テキスト';
-  const after = v.slice(e);
-  ta.value = `${before}<font color="${hex}">${selected}</font>${after}`;
-
-  const pos = (before + `<font color="${hex}">${selected}</font>`).length;
-  ta.focus(); ta.setSelectionRange(pos, pos);
-  ta.dispatchEvent(new Event('input'));
-}
 
   function removeColorFromSelection(){
     const ta=memoArea; if(!ta) return;
@@ -537,7 +517,7 @@ function applyColorToSelection(hex){
 
     // 追加：色パレット（1クリック挿入）と解除
     color(btn){ showColorPopover(btn); },
-    uncolor(){ removeColorFromSelection(); } // （必要なら別ボタンに割り当て可能）
+    uncolor(){ removeColorFromSelection(); }
   };
 
   // ツールバークリック
@@ -554,6 +534,8 @@ function applyColorToSelection(hex){
   /* ===== Markdown → HTML 変換 & HTML/ PDF 書き出し ===== */
   function markdownToHtmlBody(md) {
     const text = normalizeMd(md);
+    const textPre = preprocessHeadings(text); // 見出しは先にHTML化
+
     const fallback = (() => {
       let t = escHtml(text);
       // <font> を許可
@@ -574,11 +556,11 @@ function applyColorToSelection(hex){
         .replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
       return `<p>${t}</p>`;
     })();
+
     try {
       if (typeof window.marked !== 'undefined') {
         marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
-        const renderer = createRenderer();
-        return marked.parse(text, { renderer });
+        return marked.parse(textPre);
       }
     } catch(e){ console.error(e); }
     return fallback;
