@@ -140,11 +140,12 @@ document.addEventListener('DOMContentLoaded', () => {
         .replace(/<[^>]*>/g,'');
       const id = slugify(plain);
       const innerHtml = inlineMdToHtml(innerMd);
-     // ← 見出しの直後に「空行」を挿入して、次行の **太字** などを別ブロックで解釈させる
-     return `<h${level} id="${id}">${innerHtml}</h${level}>\n\n`;
+     // 見出しブロックを確実に閉じるためのセパレータを追加
+     return `<h${level} id="${id}">${innerHtml}</h${level}>\n\n<!--md-->\n\n`;
     }
   );
 }
+
 
 
 
@@ -567,7 +568,9 @@ function fallbackMarkdownToHtml(mdPre){
   function markdownToHtmlBody(md) {
   const text0 = normalizeMd(md);
   const text1 = encodeColorMarkers(text0);
-  const textPre = preprocessHeadings(text1);
+ let textPre = preprocessHeadings(text1);
+ // hタグ直後に空白しかない/すぐ文字が来るケースを念のため分離
+ textPre = textPre.replace(/(<\/h[1-6]>)\s*(?=\S)/g, '$1\n\n');
 
   let out;
   if (typeof window.marked !== 'undefined' && marked?.parse) {
