@@ -85,9 +85,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const toStr = (v)=> (typeof v==='string'? v : (v==null? '' : String(v)));
   const escHtml = (s)=> String(s).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
   const slugify = (str)=> toStr(str).toLowerCase().trim()
-  // 全角数字 \uFF10-\uFF19 を許可
-  .replace(/[^\w\- \u3000-\u9fff\uFF10-\uFF19]/g,'')
-  .replace(/\s+/g,'-').replace(/-+/g,'-');
+    // 全角数字も許可
+    .replace(/[^\w\- \u3000-\u9fff\uFF10-\uFF19]/g,'')
+    .replace(/\s+/g,'-').replace(/-+/g,'-');
 
   // Markdown正規化（全角＃→半角、CRLF→LF）
   function normalizeMd(md){
@@ -120,133 +120,120 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ========== インラインMarkdown（見出し内などで使う軽量処理） ==========
   function inlineMdToHtml(s){
-  return String(s ?? '')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-   .replace(/__([^_]+)__/g, '<strong>$1</strong>')   // __強調__
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-   .replace(/_([^_]+)_/g, '<em>$1</em>')             // _斜体_
-    .replace(/~~([^~]+)~~/g, '<del>$1</del>');
-}
-
+    return String(s ?? '')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+      .replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  }
 
   // ========== 見出し先行HTML化（id付与、見出し内の装飾OK） ==========
   function preprocessHeadings(md){
-  const src = String(md ?? '');
-  return src.replace(
-    /^ {0,3}(#{1,6})\s+([\s\S]*?)\s*#*\s*$/gm,
-    (m, hashes, innerMd) => {
-      const level = hashes.length;
-      const plain = String(innerMd)
-        .replace(/⟦C:[^⟧]+⟧/g,'')
-        .replace(/⟦\/C⟧/g,'')
-        .replace(/<[^>]*>/g,'');
-      const id = slugify(plain);
-      const innerHtml = inlineMdToHtml(innerMd);
-     // 見出しの直後に「空行」を挿入し、次行を別段落として解釈させる
-     return `<h${level} id="${id}">${innerHtml}</h${level}>\n\n`;
-    }
-  );
-}
-
-
-// 生成されたHTMLの <li> を後処理して、タスク表記を必ずチェックボックス化
-function normalizeTaskListHtml(html) {
-  let out = String(html || '');
-
-  // 1) すでに <input type="checkbox"> を含む <li> に class を付ける
-  out = out.replace(
-    /<li>(\s*<input\b[^>]*type=["']checkbox["'][^>]*>)/gi,
-    '<li class="task-item">$1'
-  );
-
-  // 2) [- [ ] text] / [- [x] text] の “角括弧タスク” を <input> に変換
-  //   例: <li>[ ] タスク</li> / <li>[x] タスク</li>
-  out = out.replace(
-    /<li>\s*\[([ xX])\]\s*([\s\S]*?)<\/li>/g,
-    (_, chk, body) =>
-      `<li class="task-item"><input type="checkbox" disabled ${/x/i.test(chk) ? 'checked' : ''}> ${body}</li>`
-  );
-
-  return out;
-}
-
-
-
-  function createRenderer(){
-  const r = new marked.Renderer();
-  // GFMのタスクリスト: - [ ] / - [x]
-  r.listitem = function (text, task, checked) {
-    if (task) {
-      return `<li class="task-item"><input type="checkbox" disabled ${checked ? 'checked' : ''}> ${text}</li>\n`;
-    }
-    return `<li>${text}</li>\n`;
-  };
-  return r;
-}
-
-
-// ← normalizeMd / preprocessHeadings のあたりに置く
-function fallbackMarkdownToHtml(mdPre){
-  const blocks = String(mdPre ?? '').split(/\n{2,}/);
-  const out = [];
-
-  const inline = (s) => String(s ?? '')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    .replace(/~~([^~]+)~~/g, '<del>$1</del>');
-
-  for(const raw of blocks){
-    const b = raw.replace(/\s+$/,'');
-    if(!b.trim()) continue;
-
-   // 見出しで始まるブロック：見出し + 残り（残りは再帰処理）
-   const hm = b.match(/^(\s*<h[1-6]\b[\s\S]*?<\/h[1-6]>)\s*([\s\S]*)$/i);
-   if (hm) {
-     out.push(hm[1].trim());
-     const rest = hm[2].trim();
-     if (rest) out.push(fallbackMarkdownToHtml(rest));
-     continue;
-   }
-
-    const lines = b.split('\n');
-    if (lines.every(l => /^\s*-\s+/.test(l))) {
-   // 連続する同種（task / plain）ごとに <ul> を分割
-   const flush = (arr, kind) => {
-     if (!arr.length) return;
-     const items = arr.map(txt => {
-       if (kind === 'task') {
-         const tm = txt.match(/^\s*-\s+\[([ xX])\]\s+(.*)$/);
-         const checked = tm && tm[1].toLowerCase() === 'x';
-         const body = tm ? tm[2] : txt.replace(/^\s*-\s+/, '');
-         return `<li class="task-item"><input type="checkbox" disabled ${checked ? 'checked' : ''}> ${inline(body)}</li>`;
-       }
-       return `<li>${inline(txt.replace(/^\s*-\s+/, ''))}</li>`;
-     }).join('');
-     out.push(`<ul>${items}</ul>`);
-   };
-   let bucket = [];
-   let kind = null; // 'task' | 'plain'
-   for (const l of lines) {
-     const k = /^\s*-\s+\[([ xX])\]\s+/.test(l) ? 'task' : 'plain';
-     if (kind === null || kind === k) {
-       bucket.push(l); kind = k;
-     } else {
-       flush(bucket, kind);
-       bucket = [l]; kind = k;
-     }
-   }
-   flush(bucket, kind);
-   continue;
- }
-
-    out.push(`<p>${inline(b).replace(/\n/g,'<br>')}</p>`);
+    const src = String(md ?? '');
+    return src.replace(
+      /^ {0,3}(#{1,6})\s+([\s\S]*?)\s*#*\s*$/gm,
+      (m, hashes, innerMd) => {
+        const level = hashes.length;
+        const plain = String(innerMd)
+          .replace(/⟦C:[^⟧]+\⟧/g,'')   // 色マーカー除去
+          .replace(/⟦\/C⟧/g,'')
+          .replace(/<[^>]*>/g,'');     // 既存タグ（font等）も除去
+        const id = slugify(plain);
+        const innerHtml = inlineMdToHtml(innerMd);
+        return `<h${level} id="${id}">${innerHtml}</h${level}>`;
+      }
+    );
   }
-  return out.join('\n');
-}
 
-  
+  // ========== フォールバックMarkdown（marked不在時） ==========
+  function fallbackMarkdownToHtml(mdPre){
+    const blocks = String(mdPre ?? '').split(/\n{2,}/);
+    const out = [];
+
+    const inline = (s) => String(s ?? '')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+      .replace(/~~([^~]+)~~/g, '<del>$1</del>');
+
+    for(const raw of blocks){
+      const b = raw.replace(/\s+$/,'');
+      if(!b.trim()) continue;
+
+      // 見出しで始まるブロック
+      const hm = b.match(/^(\s*<h[1-6]\b[\s\S]*?<\/h[1-6]>)\s*([\s\S]*)$/i);
+      if (hm) {
+        out.push(hm[1].trim());
+        const rest = hm[2].trim();
+        if (rest) out.push(fallbackMarkdownToHtml(rest));
+        continue;
+      }
+
+      const lines = b.split('\n');
+
+      // - で始まるブロック（通常/タスク混在対応：連続塊ごとに分割）
+      if (lines.every(l => /^\s*-\s+/.test(l))) {
+        const flush = (arr, kind) => {
+          if (!arr.length) return;
+          const items = arr.map(txt => {
+            if (kind === 'task') {
+              const tm = txt.match(/^\s*-\s+\[([ xX])\]\s+(.*)$/);
+              const checked = tm && tm[1].toLowerCase() === 'x';
+              const body = tm ? tm[2] : txt.replace(/^\s*-\s+/, '');
+              return `<li class="task-item"><input type="checkbox" disabled ${checked ? 'checked' : ''}> ${inline(body)}</li>`;
+            }
+            return `<li>${inline(txt.replace(/^\s*-\s+/, ''))}</li>`;
+          }).join('');
+          out.push(`<ul>${items}</ul>`);
+        };
+        let bucket = [];
+        let kind = null; // 'task' | 'plain'
+        for (const l of lines) {
+          const k = /^\s*-\s+\[([ xX])\]\s+/.test(l) ? 'task' : 'plain';
+          if (kind === null || kind === k) {
+            bucket.push(l); kind = k;
+          } else {
+            flush(bucket, kind);
+            bucket = [l]; kind = k;
+          }
+        }
+        flush(bucket, kind);
+        continue;
+      }
+
+      // 引用
+      if (lines.every(l => /^\s*>\s+/.test(l))) {
+        const q = lines.map(l => inline(l.replace(/^\s*>\s+/, ''))).join('<br>');
+        out.push(`<blockquote>${q}</blockquote>`);
+        continue;
+      }
+
+      // 通常段落（単一改行→<br>）
+      out.push(`<p>${inline(b).replace(/\n/g,'<br>')}</p>`);
+    }
+    return out.join('\n');
+  }
+
+  // ========== 生成済みHTMLのタスク正規化（後処理） ==========
+  function normalizeTaskListHtml(html) {
+    let out = String(html || '');
+
+    // input[type=checkbox] を含む <li> に class 付与
+    out = out.replace(
+      /<li>(\s*<input\b[^>]*type=["']checkbox["'][^>]*>)/gi,
+      '<li class="task-item">$1'
+    );
+
+    // 「[ ] / [x]」形式の li を checkbox 化
+    out = out.replace(
+      /<li>\s*\[([ xX])\]\s*([\s\S]*?)<\/li>/g,
+      (_, chk, body) =>
+        `<li class="task-item"><input type="checkbox" disabled ${/x/i.test(chk) ? 'checked' : ''}> ${body}</li>`
+    );
+
+    return out;
+  }
+
   // ========== ファイル名/タイトル ==========
   function memoTxtFilename() {
     const text = (memoArea && memoArea.value) || '';
@@ -258,21 +245,20 @@ function fallbackMarkdownToHtml(mdPre){
   function memoHtmlFilename() { return memoTxtFilename().replace(/\.txt$/i, '.html'); }
   function memoPdfFilename()  { return memoTxtFilename().replace(/\.txt$/i, '.pdf'); }
   function memoTitle() {
-  const text = (memoArea && memoArea.value) || '';
-  const m = text.match(/^ {0,3}#\s*(.+?)\s*#*\s*$/m);
-  if (!m) return 'Memo';
-  // 色タグ/マーカーを外し、簡易的に装飾記号も除去
-  const raw = m[1];
-  const noColor = stripAllColorTags(raw);
-  const plain = noColor
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*]+)\*/g, '$1')
-    .replace(/~~([^~]+)~~/g, '$1')
-    .replace(/<[^>]*>/g,'')
-    .trim();
-  return plain || 'Memo';
-}
+    const text = (memoArea && memoArea.value) || '';
+    const m = text.match(/^ {0,3}#\s*(.+?)\s*#*\s*$/m);
+    if (!m) return 'Memo';
+    const raw = m[1];
+    const noColor = stripAllColorTags(raw);
+    const plain = noColor
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/\*([^*]+)\*/g, '$1')
+      .replace(/~~([^~]+)~~/g, '$1')
+      .replace(/<[^>]*>/g,'')
+      .trim();
+    return plain || 'Memo';
+  }
 
   /* ===== 時計 ===== */
   const clockEl=document.getElementById('clock');
@@ -300,63 +286,55 @@ function fallbackMarkdownToHtml(mdPre){
   });
 
   function buildTOC(md){
-  if(!tocList) return;
-  const text = normalizeMd(md);
-  const lines = text.split('\n'), items=[];
-  for(const line of lines){
-   const m = line.match(/^ {0,3}(#{1,6})\s+([\s\S]+?)\s*#*\s*$/);
-    if(m){
-     const raw = m[2]
-       .replace(/<\/?font\b[^>]*>/gi,'')   // <font> 剥がす
-       .replace(/⟦C:[^⟧]+⟧/g,'')          // 色マーカー開始を剥がす
-       .replace(/⟦\/C⟧/g,'')               // 色マーカー終了を剥がす
-       .trim();
-      items.push({level:m[1].length, text:raw});
+    if(!tocList) return;
+    const text = normalizeMd(md);
+    const lines = text.split('\n'), items=[];
+    for(const line of lines){
+      const m = line.match(/^ {0,3}(#{1,6})\s+([\s\S]+?)\s*#*\s*$/);
+      if(m){
+        const raw = m[2].replace(/<\/?font\b[^>]*>/gi,'').trim();
+        items.push({level:m[1].length, text:raw});
+      }
     }
+    tocList.innerHTML='';
+    items.forEach(it=>{
+      const id=slugify(it.text);
+      const li=document.createElement('li'); li.className='lvl'+it.level;
+      const a=document.createElement('a'); a.href='#'+id; a.textContent=it.text;
+      a.onclick=(e)=>{ e.preventDefault(); const el=document.getElementById(id); if(el) el.scrollIntoView({behavior:'smooth'}) }
+      li.appendChild(a); tocList.appendChild(li);
+    });
   }
-  tocList.innerHTML='';
-  items.forEach(it=>{
-    const id=slugify(it.text);
-    const li=document.createElement('li'); li.className='lvl'+it.level;
-    const a=document.createElement('a'); a.href='#'+id; a.textContent=it.text;
-    a.onclick=(e)=>{ e.preventDefault(); const el=document.getElementById(id); if(el) el.scrollIntoView({behavior:'smooth'}) }
-    li.appendChild(a); tocList.appendChild(li);
-  });
-}
 
   function renderPreview(){
-  if(!memoArea || !memoPreview) return;
+    if(!memoArea || !memoPreview) return;
 
-  // 1) 正規化 → <font> を一旦マーカー化（⟦C:#hex⟧..⟦/C⟧）
-  const md0 = normalizeMd(memoArea.value || '');
-  const md1 = encodeColorMarkers(md0);
+    // 1) 正規化 → <font> を一旦マーカー化
+    const md0 = normalizeMd(memoArea.value || '');
+    const md1 = encodeColorMarkers(md0);
 
-  // 2) 見出しだけ先に HTML 化（見出し内でも ** / * / ~~ / ` が効く）
-  const mdPre = preprocessHeadings(md1);
+    // 2) 見出しだけ先に HTML 化（見出し内 **/*/~~/` を有効）
+    const mdPre = preprocessHeadings(md1);
 
-  // 3) 本文の Markdown をHTML化
-  let html;
-  if (typeof window.marked !== 'undefined' && marked?.parse) {
-    marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
-    html = marked.parse(mdPre);
-  } else {
-    html = fallbackMarkdownToHtml(mdPre);
-}
+    // 3) Markdown → HTML
+    let html;
+    if (typeof window.marked !== 'undefined' && marked?.parse) {
+      marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
+      html = marked.parse(mdPre);
+    } else {
+      html = fallbackMarkdownToHtml(mdPre);
+    }
 
-  // 4) 色マーカーを <span style="color:…"> に復元（ここで色が付く）
-  html = decodeColorMarkersToHtml(html);
+    // 4) 色マーカーを復元
+    html = decodeColorMarkersToHtml(html);
 
-  // 4.5) タスクリストを正規化（●を消し、checkbox化）
- html = normalizeTaskListHtml(html);
+    // 4.5) タスクリスト正規化
+    html = normalizeTaskListHtml(html);
 
-  // 5) 反映＆TOC
-  memoPreview.innerHTML = html;
-
-
-  // 5) 反映＆TOC
-  memoPreview.innerHTML = html;
-  buildTOC(md0);
-}
+    // 5) 反映＆TOC
+    memoPreview.innerHTML = html;
+    buildTOC(md0);
+  }
 
   function showEdit(){
     try{
@@ -631,37 +609,19 @@ function fallbackMarkdownToHtml(mdPre){
   /* ===== Markdown → HTML 変換 & HTML/ PDF 書き出し ===== */
   function markdownToHtmlBody(md) {
     const text0 = normalizeMd(md);
-  const text1 = encodeColorMarkers(text0);
- let textPre = preprocessHeadings(text1);
-
- // --- リスト境界補正 ---
- // 通常リスト(- ) → タスクリスト(- [ ] / - [x]) の直前に空行を挿入
- textPre = textPre.replace(
-   /(^|\n)(-\s+(?!\[[ xX]\]).*?)\n(-\s+\[(?: |x|X)\]\s+)/g,
-   '$1$2\n\n$3'
- );
- // タスクリスト → 通常リスト の直前にも空行を挿入
- textPre = textPre.replace(
-   /(^|\n)(-\s+\[(?: |x|X)\]\s+.*)\n(-\s+(?!\[[ xX]\]).+)/g,
-   '$1$2\n\n$3'
- );
-
- // hタグの直後に空行が無いケースを強制分離
- textPre = textPre.replace(/(<\/h[1-6]>)(?!\n\n)/g, '$1\n\n');
-
- // hタグ直後に空白しかない/すぐ文字が来るケースを念のため分離
- textPre = textPre.replace(/(<\/h[1-6]>)\s*(?=\S)/g, '$1\n\n');
+    const text1 = encodeColorMarkers(text0);
+    const textPre = preprocessHeadings(text1);
 
     let out;
-  if (typeof window.marked !== 'undefined' && marked?.parse) {
-    marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
-    out = marked.parse(textPre);
-  } else {
-    out = fallbackMarkdownToHtml(textPre);
+    if (typeof window.marked !== 'undefined' && marked?.parse) {
+      marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
+      out = marked.parse(textPre);
+    } else {
+      out = fallbackMarkdownToHtml(textPre);
+    }
+    out = decodeColorMarkersToHtml(out);
+    return normalizeTaskListHtml(out);
   }
- out = decodeColorMarkersToHtml(out);
- return normalizeTaskListHtml(out);
-
 
   function buildStandaloneHtml(title, innerHtml) {
     const css = `
@@ -675,11 +635,9 @@ function fallbackMarkdownToHtml(mdPre){
       a{color:#2563eb;text-decoration:none} a:hover{text-decoration:underline}
       hr{border:none;border-top:1px solid #e5e5e5;margin:2em 0}
       img{max-width:100%;height:auto}
-     table{border-collapse:collapse} td,th{border:1px solid #e5e5e5;padding:.4em .6em}
-/* task list */
-li.task-item{list-style:none}
-li.task-item input[type="checkbox"]{vertical-align:middle;margin-right:.4em}
-
+      table{border-collapse:collapse} td,th{border:1px solid #e5e5e5;padding:.4em .6em}
+      li.task-item{list-style:none}
+      li.task-item input[type="checkbox"]{vertical-align:middle;margin-right:.4em}
     `.trim();
     return [
       '<!doctype html>',
@@ -1031,7 +989,6 @@ li.task-item input[type="checkbox"]{vertical-align:middle;margin-right:.4em}
   const supportsBackdrop = CSS.supports('backdrop-filter','blur(10px)') || CSS.supports('-webkit-backdrop-filter','blur(10px)');
   if(!supportsBackdrop){ document.querySelectorAll('.glass').forEach(el=> el.style.background='rgba(255,255,255,.9)'); }
 
-  
   // 初期化確認ログ
   console.log('[init] app.js loaded, buttons:', {
     save: !!document.getElementById('saveMemo'),
