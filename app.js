@@ -78,13 +78,13 @@ document.addEventListener('DOMContentLoaded', () => {
     let html = fallbackHtml;
     try {
       if (typeof window.marked !== 'undefined') {
-        marked.setOptions({ mangle:false, headerIds:true, headerPrefix:'' });
-        const renderer = new marked.Renderer();
-        renderer.heading = (text, level, raw) => {
-          const id = slugify(raw || text);
-          return `<h${level} id="${id}">${toStr(text)}</h${level}>\n`;
-        };
-        html = marked.parse(toStr(memoArea.value || ''), { renderer });
+        marked.setOptions({ mangle:false, headerIds:false }); // ← 内部のID生成を停止
+  const renderer = new marked.Renderer();
+  renderer.heading = (text, level, raw) => {
+    const id = slugify(raw || text);             // ← こちらでIDを付与
+    return `<h${level} id="${id}">${toStr(text)}</h${level}>\n`;
+  };
+        html = marked.parse(toStr(memoArea.value || ''), { renderer }); // 自前IDのみ使用
       }
     } catch (e) {
       console.error('marked parse failed, fallback used:', e);
