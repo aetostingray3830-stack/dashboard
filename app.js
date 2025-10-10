@@ -270,17 +270,65 @@ document.addEventListener('DOMContentLoaded', () => {
   /* ===== ワンクリック挿入ツールバー ===== */
 
   // ---- 色ユーティリティ（選択範囲に color 適用/解除） ----
-  function applyColorToSelection(hex){
-    const ta=memoArea; if(!ta) return;
-    const {selectionStart:s, selectionEnd:e}=ta;
-    const before=ta.value.slice(0,s);
-    const selected=ta.value.slice(s,e) || 'テキスト';
-    const after=ta.value.slice(e);
-    ta.value = `${before}<font color="${hex}">${selected}</font>${after}`;
-    const pos = (before+`<font color="${hex}">${selected}</font>`).length;
-    ta.focus(); ta.setSelectionRange(pos,pos);
-    ta.dispatchEvent(new Event('input'));
+  // これで置き換え
+function applyColorToSelection(hex){
+  const ta = memoArea; if(!ta) return;
+  const {selectionStart:s0, selectionEnd:e0} = ta;
+  let s = s0, e = e0;
+
+  // 選択が空でも、カーソル行が Markdown 見出しなら “見出しの本文部分” を自動選択
+  // 例: "## 見出し ###" → "見出し" 部分だけに色を当てる
+  function headingContentRange() {
+    const v = ta.value;
+    // 行境界
+    const lineStart = v.lastIndexOf('\n', s-1) + 1;
+    const nl = v.indexOf('\n', s);
+    const lineEnd = nl === -1 ? v.length : nl;
+    const line = v.slice(lineStart, lineEnd);
+
+    // 先頭0-3空白 + #1-6 + 本文 + 末尾#は無視
+    const m = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (!m) return null;
+
+    // 本文の開始/終了（文頭からのオフセットを実テキスト位置に変換）
+    const hashes = m[1];
+    const before = line.indexOf(hashes) + hashes.length; // 先頭#列の末尾位置
+    const afterHashSpace = line.slice(before).match(/^\s*/)[0].length; // 直後の空白
+    const contentStartInLine = before + afterHashSpace;
+
+    // 末尾の装飾 # は除外。行末から連続する # と空白を削る
+    let contentEndInLine = line.length;
+    const tail = line.match(/\s*#*\s*$/);
+    if (tail) contentEndInLine = line.length - tail[0].length;
+
+    // 絶対位置に
+    const absStart = lineStart + contentStartInLine;
+    const absEnd   = Math.max(absStart, lineStart + contentEndInLine);
+    return { start: absStart, end: absEnd };
   }
+
+  // 選択が空 or 見出しの # 部分だけ選ばれてそう → 本文部分に当て直す
+  if (s === e) {
+    const rng = headingContentRange();
+    if (rng) { s = rng.start; e = rng.end; }
+  } else {
+    // 選択開始が見出しの # 位置にかかってる場合は本文先頭までスライド
+    const rng = headingContentRange();
+    if (rng && s >= rng.start - 3 && s < rng.start) s = rng.start;
+    // 終端が末尾の #### にかかってたら本文終端までスライド
+    if (rng && e > rng.end) e = rng.end;
+  }
+
+  const before = ta.value.slice(0, s);
+  const selected = (s < e ? ta.value.slice(s, e) : '') || 'テキスト';
+  const after = ta.value.slice(e);
+
+  ta.value = `${before}<font color="${hex}">${selected}</font>${after}`;
+
+  const pos = (before + `<font color="${hex}">${selected}</font>`).length;
+  ta.focus(); ta.setSelectionRange(pos, pos);
+  ta.dispatchEvent(new Event('input'));
+}
 
   function removeColorFromSelection(){
     const ta=memoArea; if(!ta) return;
