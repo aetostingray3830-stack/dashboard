@@ -87,6 +87,29 @@ document.addEventListener('DOMContentLoaded', () => {
   const slugify = (str)=> toStr(str).toLowerCase().trim()
     .replace(/[^\w\- \u3000-\u9fff]/g,'').replace(/\s+/g,'-').replace(/-+/g,'-');
 
+  // ⟦C:#hex⟧...⟦/C⟧ というプレースホルダにエンコード
+function encodeColorMarkers(md){
+  return String(md ?? '')
+    .replace(/<font\b([^>]*)>/gi, (m, attrs) => {
+      const col = (attrs.match(/color\s*=\s*["']?([#\w()-]+)["']?/i) || [])[1];
+      return col ? `⟦C:${col}⟧` : '';
+    })
+    .replace(/<\/font>/gi, '⟦/C⟧');
+}
+// プレースホルダをHTMLに戻す
+function decodeColorMarkersToHtml(html){
+  return String(html ?? '')
+    .replace(/⟦C:([^⟧]+)⟧/g, (_,c)=>`<span style="color:${escHtml(c)}">`)
+    .replace(/⟦\/C⟧/g, '</span>');
+}
+// TXT出力用：<font> とプレースホルダを両方除去
+function stripAllColorTags(mdOrText){
+  return String(mdOrText ?? '')
+    .replace(/<\/?font\b[^>]*>/gi, '')
+    .replace(/⟦C:[^⟧]+⟧/g, '')
+    .replace(/⟦\/C⟧/g, '');
+}
+
   // Markdown正規化（全角＃→半角、CRLF→LF）
   function normalizeMd(md){
     return toStr(md).replace(/＃/g, '#').replace(/\r\n?/g, '\n');
@@ -179,8 +202,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if(!memoArea || !memoPreview) return;
 
     const raw = (memoArea && memoArea.value) || '';
-    const md  = normalizeMd(raw);
-    const mdPre = preprocessHeadings(md); // 見出しは先にHTML化
+const md0 = normalizeMd(raw);
+const md1 = encodeColorMarkers(md0);     // ← 追加：色タグをマーカー化
+const mdPre = preprocessHeadings(md1);   // ← 見出しHTML化は従来どおり
 
     const fallbackHtml = (() => {
       let t = escHtml(md);
@@ -207,6 +231,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (typeof window.marked !== 'undefined') {
         marked.setOptions({ mangle:false, headerIds:false, gfm:true, breaks:false });
         html = marked.parse(mdPre);
+        html = decodeColorMarkersToHtml(html); // ← 追加：最後に色を <span> へ
       }
     } catch (e) {
       console.error('marked parse failed, fallback used:', e);
