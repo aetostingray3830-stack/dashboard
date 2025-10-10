@@ -293,6 +293,14 @@ function fallbackMarkdownToHtml(mdPre){
   // 4) 色マーカーを <span style="color:…"> に復元（ここで色が付く）
   html = decodeColorMarkersToHtml(html);
 
+ // 4.5) チェックボックスを含む <li> にクラス付与（タスクの黒丸を消すため）
+ html = html.replace(/<li>\s*<input([^>]*type=["']checkbox["'][^>]*)/g,
+                     '<li class="task-item"><input$1');
+
+  // 5) 反映＆TOC
+  memoPreview.innerHTML = html;
+
+
   // 5) 反映＆TOC
   memoPreview.innerHTML = html;
   buildTOC(md0);
