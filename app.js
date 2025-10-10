@@ -142,6 +142,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function createRenderer(){ return new marked.Renderer(); }
 
+// ← normalizeMd / preprocessHeadings のあたりに置く
+function fallbackMarkdownToHtml(mdPre){
+  const blocks = String(mdPre ?? '').split(/\n{2,}/);
+  const out = [];
+  const inline = (s) => String(s ?? '')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  for(const raw of blocks){
+    const b = raw.replace(/\s+$/,''); if(!b.trim()) continue;
+    if (/^<h[1-6]\b/i.test(b.trim())) { out.push(b.trim()); continue; }
+    const lines = b.split('\n');
+    if (lines.every(l => /^\s*-\s+/.test(l))) {
+      const items = lines.map(l => `<li>${inline(l.replace(/^\s*-\s+/,''))}</li>`).join('');
+      out.push(`<ul>${items}</ul>`); continue;
+    }
+    if (lines.every(l => /^\s*>\s+/.test(l))) {
+      const q = lines.map(l => inline(l.replace(/^\s*>\s+/, ''))).join('<br>');
+      out.push(`<blockquote>${q}</blockquote>`); continue;
+    }
+    out.push(`<p>${inline(b).replace(/\n/g,'<br>')}</p>`);
+  }
+  return out.join('\n');
+}
+
+  
   // ========== ファイル名/タイトル ==========
   function memoTxtFilename() {
     const text = (memoArea && memoArea.value) || '';
@@ -223,51 +250,6 @@ document.addEventListener('DOMContentLoaded', () => {
   } else {
     html = fallbackMarkdownToHtml(mdPre);
 }
-html = decodeColorMarkersToHtml(html);
-    // フォールバック：空行でブロック分割 → p/ul/blockquote を生成し、
-// 各ブロック内で ** / * / ~~ / ` を確実に変換
-function fallbackMarkdownToHtml(mdPre){
-  const blocks = String(mdPre ?? '').split(/\n{2,}/);
-  const out = [];
-
-  const inline = (s) => String(s ?? '')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    .replace(/~~([^~]+)~~/g, '<del>$1</del>');
-
-  for(const raw of blocks){
-    const b = raw.replace(/\s+$/,'');
-    if(!b.trim()) continue;
-
-    // 見出し（preprocessHeadings 済み）はそのまま
-    if (/^<h[1-6]\b/i.test(b.trim())) { out.push(b.trim()); continue; }
-
-    const lines = b.split('\n');
-
-    // 箇条書き（- だけ簡易対応）
-    if (lines.every(l => /^\s*-\s+/.test(l))) {
-      const items = lines.map(l => {
-        const m = l.match(/^\s*-\s+(.*)$/);
-        return `<li>${inline(m ? m[1] : l)}</li>`;
-      }).join('');
-      out.push(`<ul>${items}</ul>`);
-      continue;
-    }
-
-    // 引用（> の連続）
-    if (lines.every(l => /^\s*>\s+/.test(l))) {
-      const q = lines.map(l => inline(l.replace(/^\s*>\s+/, ''))).join('<br>');
-      out.push(`<blockquote>${q}</blockquote>`);
-      continue;
-    }
-
-    // 通常段落（単一改行は <br>）
-    out.push(`<p>${inline(b).replace(/\n/g,'<br>')}</p>`);
-  }
-  return out.join('\n');
-}
-
 
   // 4) 色マーカーを <span style="color:…"> に復元（ここで色が付く）
   html = decodeColorMarkersToHtml(html);
