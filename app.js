@@ -13,23 +13,58 @@ window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
 
 /* ========= アプリ初期化 ========= */
 document.addEventListener('DOMContentLoaded', () => {
-  /* ===== localStorage セーフラッパー ===== */
+  /* ====== 永続化：localStorage → IndexedDB → DL ====== */
+  // localStorage ラッパー
   const lsOK = (()=>{ try{ const k='__probe__'; localStorage.setItem(k,'1'); localStorage.removeItem(k); return true; }catch(_){ return false; }})();
   const lsGet = (k, def='') => { try{ const v = localStorage.getItem(k); return v===null? def : v; }catch(e){ console.warn('lsGet fail', e); return def; } };
   const lsSet = (k, v) => { try{ localStorage.setItem(k, v); return true; }catch(e){ console.warn('lsSet fail', e); return false; } };
+  // IndexedDB フォールバック
+  const hasIDB = 'indexedDB' in window;
+  let idbdb = null;
+  function idbInit(){
+    return new Promise((resolve)=> {
+      if(!hasIDB){ resolve(null); return; }
+      const req = indexedDB.open('glassDB', 1);
+      req.onupgradeneeded = ()=> req.result.createObjectStore('kv');
+      req.onsuccess = ()=> { idbdb = req.result; resolve(idbdb); };
+      req.onerror = ()=> resolve(null);
+    });
+  }
+  function idbSet(k, v){
+    return new Promise((resolve)=> {
+      if(!idbdb){ resolve(false); return; }
+      const tx = idbdb.transaction('kv','readwrite');
+      tx.objectStore('kv').put(v, k);
+      tx.oncomplete = ()=> resolve(true);
+      tx.onerror    = ()=> resolve(false);
+    });
+  }
+  function idbGet(k){
+    return new Promise((resolve)=> {
+      if(!idbdb){ resolve(null); return; }
+      const tx  = idbdb.transaction('kv','readonly');
+      const req = tx.objectStore('kv').get(k);
+      req.onsuccess = ()=> resolve(req.result ?? null);
+      req.onerror   = ()=> resolve(null);
+    });
+  }
+  // 退避用DL
   const download = (text, filename='backup.txt') => {
     const blob = new Blob([text], {type:'text/plain'}); const a=document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click();
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 0);
   };
+  // IndexedDB 起動
+  idbInit();
+  // 保存不可の注意（任意のバナー）
   if(!lsOK){
-    console.warn('localStorage not available. Saving will fall back to file download.');
     const note=document.createElement('div');
-    note.textContent='⚠ ブラウザが保存をブロック中。保存するとバックアップをダウンロードします。';
+    note.textContent='⚠ このブラウザでは通常保存が制限されています。保存時はIndexedDB/ファイルDLで退避します。';
     note.style.cssText='position:fixed;left:16px;bottom:16px;background:#000a;color:#fff;padding:8px 10px;border-radius:8px;font-size:12px;z-index:2000';
     document.body.appendChild(note); setTimeout(()=>note.remove(), 6000);
   }
 
+  /* ====== ユーティリティ ====== */
   const toStr = (v) => (typeof v === 'string' ? v : (v == null ? '' : String(v)));
   const slugify = (str)=> toStr(str).toLowerCase().trim()
     .replace(/[^\w\- \u3000-\u9fff]/g,'').replace(/\s+/g,'-').replace(/-+/g,'-');
@@ -53,6 +88,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const tocList=document.getElementById('tocList');
 
   if(memoArea) memoArea.value = lsGet(memoKey, '');
+  // localStorageに無ければ IndexedDB から復元
+  idbInit().then(()=> idbGet(memoKey)).then(v=>{
+    if(memoArea && !memoArea.value && typeof v === 'string'){ memoArea.value = v; }
+  });
 
   function buildTOC(md){
     if(!tocList) return;
@@ -74,7 +113,6 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderPreview(){
     if(!memoArea || !memoPreview) return;
 
-    // フォールバックHTML（簡易Markdown）
     const fallbackHtml = (() => {
       const esc = (s)=>toStr(s).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
       let t = esc(memoArea.value || '');
@@ -93,11 +131,10 @@ document.addEventListener('DOMContentLoaded', () => {
       return `<p>${t}</p>`;
     })();
 
-    // marked が使える場合のみ使う（内部ID生成を完全停止）
     let html = fallbackHtml;
     try {
       if (typeof window.marked !== 'undefined') {
-        marked.setOptions({ mangle:false, headerIds:false }); // ← 内部 slugger を止める
+        marked.setOptions({ mangle:false, headerIds:false }); // 内部ID生成を止める
         const renderer = new marked.Renderer();
         renderer.heading = (text, level, raw) => {
           const id = slugify(raw || text);
@@ -133,20 +170,32 @@ document.addEventListener('DOMContentLoaded', () => {
   if(editBtn)    editBtn.onclick    = showEdit;
   if(previewBtn) previewBtn.onclick = showPreview;
 
-  if(saveMemoBtn) saveMemoBtn.onclick = () => {
+  if(saveMemoBtn) saveMemoBtn.onclick = async () => {
     if(!memoArea) return;
-    const ok = lsSet(memoKey, memoArea.value);
+    const val = memoArea.value;
+
+    let ok = lsSet(memoKey, val);
+    if(!ok){ await idbInit(); ok = await idbSet(memoKey, val); }
+
     if(ok){
       saveMemoBtn.textContent='保存済';
     }else{
       saveMemoBtn.textContent='保存失敗…バックアップDL';
-      download(memoArea.value, 'memo-backup.txt');
+      download(val, 'memo-backup.txt');
       alert('保存がブロックされました。テキストをダウンロードで退避しました。');
     }
     setTimeout(()=>saveMemoBtn.textContent='保存', 1200);
   };
-  if(clearMemoBtn) clearMemoBtn.onclick=()=>{ if(!memoArea) return; if(confirm('メモを消去しますか？')){ memoArea.value=''; lsSet(memoKey,''); renderPreview(); showEdit(); } };
-  if(memoArea) setInterval(()=> { lsSet(memoKey, memoArea.value); }, 10000);
+
+  if(clearMemoBtn) clearMemoBtn.onclick=()=>{ 
+    if(!memoArea) return; 
+    if(confirm('メモを消去しますか？')){ memoArea.value=''; lsSet(memoKey,''); idbInit().then(()=>idbSet(memoKey,'')); renderPreview(); showEdit(); } 
+  };
+
+  if(memoArea) setInterval(async ()=> { 
+    const val=memoArea.value; 
+    if(!lsSet(memoKey, val)){ await idbInit(); await idbSet(memoKey, val); } 
+  }, 10000);
 
   let tocTimer=null;
   if(memoArea) memoArea.addEventListener('input', ()=>{ if(tocTimer) clearTimeout(tocTimer); tocTimer=setTimeout(()=>buildTOC(memoArea.value||''), 250); });
@@ -302,7 +351,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (phaseLabel) {
       phaseLabel.textContent = state.mode==='plain' ? 'タイマー' : (state.phase==='work'?'作業':'休憩');
     }
-    lsSet(tKey, JSON.stringify(state));
+    lsSet(tKey, JSON.stringify(state)); idbInit().then(()=>idbSet(tKey, JSON.stringify(state)));
   }
   syncTimerUI();
 
@@ -343,6 +392,19 @@ document.addEventListener('DOMContentLoaded', () => {
   const saveProgressBtn=document.getElementById('saveProgress');
   let prog={goal:1000,current:0,auto:true};
   try{ prog=Object.assign(prog, JSON.parse(lsGet(pKey,'{}')) ); }catch{}
+  // IndexedDB からの追復元
+  idbInit().then(()=> idbGet(pKey)).then(v=>{
+    if(typeof v === 'string'){
+      try{
+        const obj = JSON.parse(v);
+        prog = Object.assign(prog, obj||{});
+        if(goalInput) goalInput.value=prog.goal;
+        if(currentInput) currentInput.value=prog.current;
+        if(autoCount) autoCount.checked=!!prog.auto;
+        updateProgress();
+      }catch{}
+    }
+  });
   if(goalInput) goalInput.value=prog.goal;
   if(currentInput) currentInput.value=prog.current;
   if(autoCount) autoCount.checked=!!prog.auto;
@@ -358,16 +420,18 @@ document.addEventListener('DOMContentLoaded', () => {
     if(remainText) remainText.textContent=String(Math.max(0,goal-cur));
   }
   updateProgress();
-  function saveProgress(){
+  async function saveProgress(){
     prog.goal=Math.max(0,parseInt((goalInput && goalInput.value)||'0'));
     prog.current=Math.max(0,parseInt((currentInput && currentInput.value)||'0'));
     prog.auto=!!(autoCount && autoCount.checked);
-    const ok = lsSet(pKey, JSON.stringify(prog));
+    const json = JSON.stringify(prog);
+    let ok = lsSet(pKey, json);
+    if(!ok){ await idbInit(); ok = await idbSet(pKey, json); }
     updateProgress();
     if(saveProgressBtn){
       saveProgressBtn.textContent = ok ? '保存済' : '保存失敗…バックアップDL';
       if(!ok){
-        download(JSON.stringify(prog,null,2), 'progress-backup.json');
+        download(json, 'progress-backup.json');
         alert('進捗の保存に失敗しました。JSONをダウンロードで退避しました。');
       }
       setTimeout(()=>saveProgressBtn.textContent='保存', 1200);
@@ -396,7 +460,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.body.classList.toggle('white-text', !!s.whiteText);
     if(toggleWhiteText) toggleWhiteText.textContent = s.whiteText ? '文字色を通常に戻す' : '文字色を白にする';
   };
-  const saveSettings=(s)=> lsSet(settingsKey, JSON.stringify(s));
+  const saveSettings=(s)=>{ lsSet(settingsKey, JSON.stringify(s)); idbInit().then(()=>idbSet(settingsKey, JSON.stringify(s))); };
   const loadSettings=()=>{ try{return JSON.parse(lsGet(settingsKey,'{}'))}catch{return{}} };
 
   function drawBgControls(s){
